@@ -43,6 +43,7 @@ const uiContentSecurityPolicy = "default-src 'none'; " +
 	"connect-src 'self'; " +
 	"frame-src http: https:; " +
 	"media-src http: https:; " +
+	"img-src http: https:; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
 	"frame-ancestors 'none'"

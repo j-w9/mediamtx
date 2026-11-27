@@ -26,6 +26,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/recorder"
 	"github.com/bluenviron/mediamtx/internal/staticsources"
 	"github.com/bluenviron/mediamtx/internal/stream"
+	"github.com/bluenviron/mediamtx/internal/telemetry"
 )
 
 func emptyTimer() *time.Timer {
@@ -151,6 +152,7 @@ type path struct {
 	compressCmd                    *externalcmd.Cmd
 	compressOnDemandCmd            string
 	detectWorker                   *detect.Worker
+	telemetry                      *telemetry.Tracker
 	internalReaders                map[defs.Reader]struct{}
 	onOfflineHook                  func()
 	readers                        map[defs.Reader]struct{}
@@ -497,6 +499,10 @@ func (pa *path) doReloadConf(newConf *conf.Path) {
 		}
 	}
 
+	if pa.telemetry != nil {
+		pa.telemetry.SetRepair(newConf.KLVRepair)
+	}
+
 	if newConf.Detect != oldConf.Detect ||
 		newConf.DetectModel != oldConf.DetectModel ||
 		newConf.DetectServer != oldConf.DetectServer ||
@@ -821,6 +827,12 @@ func (pa *path) doAPIPathsGet(req pathAPIPathsGetReq) {
 				return &v
 			}(),
 			Recording: pa.recorder != nil,
+			Telemetry: func() *defs.APIPathTelemetry {
+				if pa.telemetry == nil || !pa.isAvailable() {
+					return nil
+				}
+				return pa.telemetry.APIItem()
+			}(),
 			Detection: func() *defs.APIPathDetection {
 				if pa.detectWorker == nil {
 					return nil
@@ -1092,6 +1104,12 @@ func (pa *path) setAvailable(
 		ReplaceNTP:            replaceNTP,
 		Parent:                pa,
 	}
+
+	// metadata of the stream is followed, and repaired if requested
+	pa.telemetry = &telemetry.Tracker{}
+	pa.telemetry.SetRepair(pa.conf.KLVRepair)
+	strm.KLVProcessor = pa.telemetry.Process
+
 	err := strm.Initialize()
 	if err != nil {
 		return err

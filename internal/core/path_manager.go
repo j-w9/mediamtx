@@ -45,6 +45,8 @@ func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
 	clone.CompressAudioBitrate = newPathConf.CompressAudioBitrate
 	clone.CompressPathSuffix = newPathConf.CompressPathSuffix
 
+	clone.KLVRepair = newPathConf.KLVRepair
+
 	clone.Detect = newPathConf.Detect
 	clone.DetectModel = newPathConf.DetectModel
 	clone.DetectServer = newPathConf.DetectServer

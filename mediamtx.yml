@@ -629,6 +629,20 @@ pathDefaults:
   compressPathSuffix: _compressed
 
   ###############################################
+  # Default path settings -> Metadata
+
+  # Streams that carry KLV metadata (MISB ST 0601), like the ones produced by drones and
+  # aircraft sensors, are decoded automatically: the position of the sensor and of the area
+  # it is looking at are available through the API (in the "telemetry" field of paths),
+  # and are shown on a map in the web UI.
+  #
+  # Repair KLV metadata before forwarding it to readers, recordings and other servers,
+  # so that it is accepted by strict receivers: checksums are recomputed, the timestamp
+  # is moved first and the checksum last, missing or implausible timestamps are replaced
+  # with the current time, a missing version is added, and damaged items are dropped.
+  klvRepair: false
+
+  ###############################################
   # Default path settings -> Object detection
 
   # Run an object detection model on the stream.

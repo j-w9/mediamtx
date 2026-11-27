@@ -194,14 +194,14 @@ func Decode(buf []byte) (*Packet, error) {
 	pos := 0
 
 	for pos < len(body) {
-		tag, tn, err := readBEROID(body[pos:])
-		if err != nil {
-			return p, err
+		tag, tn, err2 := readBEROID(body[pos:])
+		if err2 != nil {
+			return p, err2
 		}
 
-		il, ln, err := readBERLength(body[pos+tn:])
-		if err != nil {
-			return p, err
+		il, ln, err2 := readBERLength(body[pos+tn:])
+		if err2 != nil {
+			return p, err2
 		}
 
 		vstart := pos + tn + ln

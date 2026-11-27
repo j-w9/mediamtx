@@ -48,6 +48,7 @@ type streamFormat struct {
 	outboundBytes                   *atomic.Uint64
 	writeRTSP                       func([]*rtp.Packet, time.Time)
 	updateOutDesc                   func(func())
+	klvProcessor                    func([]byte) []byte
 	parent                          logger.Writer
 
 	outFormat     format.Format
@@ -76,6 +77,17 @@ func (sf *streamFormat) initialize() error {
 
 	sf.formatUpdater = newFormatUpdater(sf.outFormat)
 	sf.unitRemuxer = newUnitRemuxer(sf.outFormat)
+
+	if _, ok := sf.outFormat.(*format.KLV); ok && sf.klvProcessor != nil {
+		sf.unitRemuxer = func(_ format.Format, payload unit.Payload) unit.Payload {
+			if p, ok2 := payload.(unit.PayloadKLV); ok2 {
+				return unit.PayloadKLV(sf.klvProcessor(p))
+			}
+			return payload
+		}
+		// units can be modified: RTP packets must be generated from the result
+		sf.forceRemux = true
+	}
 
 	if sf.replaceNTP {
 		sf.ntpEstimator = &ntpestimator.Estimator{

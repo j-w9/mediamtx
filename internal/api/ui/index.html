@@ -365,6 +365,54 @@ main { padding: 20px; }
 
 .copy input { flex: 1; min-width: 0; text-overflow: ellipsis; }
 
+.map {
+  position: relative;
+  overflow: hidden;
+  background: #0e151d;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.map.big { aspect-ratio: auto; height: calc(100vh - 150px); min-height: 320px; border: 1px solid var(--rail); border-radius: var(--radius); }
+
+.map .tiles { position: absolute; inset: 0; filter: brightness(0.62) saturate(0.6) contrast(1.1); }
+
+.map img.tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; }
+
+.map canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.map .ctl {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.map .ctl button, .map .base {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  color: var(--ink);
+  min-width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.map .base { position: absolute; left: 8px; top: 8px; padding: 0 6px; }
+
+.map .credit { position: absolute; right: 6px; bottom: 4px; font-size: 11px; color: var(--dim); background: rgba(19, 28, 38, 0.7); padding: 0 4px; }
+
+.readout { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; margin-top: 10px; }
+
+.readout dt { color: var(--dim); }
+
+.readout dd { margin: 0; }
+
 .stage { position: relative; }
 
 .overlay {
@@ -597,6 +645,7 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
   <div class="tabs" role="tablist">
     <button role="tab" data-view="feeds" aria-selected="true">Feeds</button>
     <button role="tab" data-view="wall" aria-selected="false">Wall</button>
+    <button role="tab" data-view="map" aria-selected="false">Map</button>
     <button role="tab" data-view="recordings" aria-selected="false">Recordings</button>
   </div>
   <div class="server" id="server"></div>
@@ -834,6 +883,390 @@ let fieldSeq = 0;
 function field(label, input, cls) {
   if (!input.id) input.id = 'f' + (++fieldSeq);
   return el('div', { class: 'field' + (cls ? ' ' + cls : '') }, el('label', { for: input.id }, label), input);
+}
+
+// ---------- map ----------
+
+// A small map: tiles when a basemap is chosen, a plain grid otherwise, and a canvas on top
+// for aircraft, tracks and the area each sensor is looking at. It needs no library, and
+// asks nothing to other servers unless a basemap is turned on.
+const TILE = 256;
+const basemaps = {
+  grid: { name: 'Grid', url: '' },
+  osm: { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', credit: '© OpenStreetMap contributors' },
+};
+
+function loadPref(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch (e) { return fallback; }
+}
+
+function savePref(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+}
+
+const lonToX = (lon, z) => (lon + 180) / 360 * TILE * 2 ** z;
+const latToY = (lat, z) => {
+  const s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * TILE * 2 ** z;
+};
+const xToLon = (x, z) => x / (TILE * 2 ** z) * 360 - 180;
+const yToLat = (y, z) => {
+  const n = Math.PI - 2 * Math.PI * y / (TILE * 2 ** z);
+  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+};
+
+// position reached by moving a distance (meters) from a point along a bearing (degrees)
+function destination(lat, lon, bearing, dist) {
+  const R = 6371000;
+  const b = bearing * Math.PI / 180;
+  const p1 = lat * Math.PI / 180;
+  const l1 = lon * Math.PI / 180;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(dist / R) + Math.cos(p1) * Math.sin(dist / R) * Math.cos(b));
+  const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(dist / R) * Math.cos(p1), Math.cos(dist / R) - Math.sin(p1) * Math.sin(p2));
+  return { lat: p2 * 180 / Math.PI, lon: l2 * 180 / Math.PI };
+}
+
+function bearing(a, b) {
+  const p1 = a.lat * Math.PI / 180;
+  const p2 = b.lat * Math.PI / 180;
+  const dl = (b.lon - a.lon) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function distance(a, b) {
+  const R = 6371000;
+  const dp = (b.lat - a.lat) * Math.PI / 180;
+  const dl = (b.lon - a.lon) * Math.PI / 180;
+  const h = Math.sin(dp / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// The area seen by the sensor. Metadata gives its corners in the best case. Otherwise it is
+// estimated from the center of the picture, the field of view and the distance from the sensor.
+function footprint(t) {
+  if (t.corners && t.corners.length === 4) return { points: t.corners, estimated: false };
+  if (t.sensorLat === null || t.frameCenterLat === null || t.hfov === null) return null;
+  const sensor = { lat: t.sensorLat, lon: t.sensorLon };
+  const center = { lat: t.frameCenterLat, lon: t.frameCenterLon };
+  const ground = distance(sensor, center);
+  const range = t.slantRange || Math.hypot(ground, t.sensorAlt || 0);
+  const width = 2 * range * Math.tan(t.hfov * Math.PI / 360);
+  const vfov = t.vfov || t.hfov * 9 / 16;
+  // a picture taken at a shallow angle covers a longer stretch of ground
+  const grazing = Math.max(0.1, Math.min(1, (t.sensorAlt || range) / range));
+  const depth = Math.min(2 * range * Math.tan(vfov * Math.PI / 360) / grazing, ground * 1.5 || Infinity);
+  const dir = ground > 1 ? bearing(sensor, center) : (t.platformHeading || 0);
+  const far = destination(center.lat, center.lon, dir, depth / 2);
+  const near = destination(center.lat, center.lon, dir + 180, depth / 2);
+  return {
+    estimated: true,
+    points: [
+      destination(far.lat, far.lon, dir - 90, width / 2), destination(far.lat, far.lon, dir + 90, width / 2),
+      destination(near.lat, near.lon, dir + 90, width / 2), destination(near.lat, near.lon, dir - 90, width / 2),
+    ],
+  };
+}
+
+const mapViews = {}; // remembered position of each map, by name
+
+// feedsFn returns the feeds to draw: [{name, t}], where t is the telemetry of the feed
+function createMap(key, feedsFn, onPick) {
+  const view = mapViews[key] || (mapViews[key] = { lat: 0, lon: 0, z: 2, follow: true, fitted: false });
+  const tiles = el('div', { class: 'tiles' });
+  const canvas = el('canvas', {});
+  const credit = el('div', { class: 'credit' });
+  const base = el('select', { class: 'base', 'aria-label': 'Basemap' },
+    Object.entries(basemaps).map(([k, b]) => el('option', { value: k }, b.name)));
+  base.value = basemaps[loadPref('basemap', 'grid')] ? loadPref('basemap', 'grid') : 'grid';
+  const followBtn = el('button', { title: 'Follow', 'aria-label': 'Follow', onclick: () => { view.follow = true; view.fitted = false; draw(); } }, '◎');
+  const root = el('div', { class: 'map' }, tiles, canvas, base, credit,
+    el('div', { class: 'ctl' },
+      el('button', { 'aria-label': 'Zoom in', onclick: () => zoom(1) }, '+'),
+      el('button', { 'aria-label': 'Zoom out', onclick: () => zoom(-1) }, '−'),
+      followBtn));
+
+  base.addEventListener('change', () => { savePref('basemap', base.value); draw(); });
+  base.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+  function zoom(d, px, py) {
+    const w = root.clientWidth;
+    const h = root.clientHeight;
+    const z = Math.max(1, Math.min(19, view.z + d));
+    if (z === view.z) return;
+    if (px !== undefined) {
+      // keep the point under the cursor where it is
+      const cx = lonToX(view.lon, view.z) + px - w / 2;
+      const cy = latToY(view.lat, view.z) + py - h / 2;
+      const f = 2 ** (z - view.z);
+      view.lon = xToLon(cx * f - (px - w / 2), z);
+      view.lat = yToLat(cy * f - (py - h / 2), z);
+      view.follow = false;
+    }
+    view.z = z;
+    draw();
+  }
+
+  root.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = root.getBoundingClientRect();
+    zoom(e.deltaY < 0 ? 1 : -1, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+
+  let drag = null;
+  root.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    drag = { x: e.clientX, y: e.clientY, cx: lonToX(view.lon, view.z), cy: latToY(view.lat, view.z), moved: false };
+    root.setPointerCapture(e.pointerId);
+  });
+  root.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
+    if (!drag.moved) return;
+    view.follow = false;
+    view.lon = xToLon(drag.cx - (e.clientX - drag.x), view.z);
+    view.lat = yToLat(drag.cy - (e.clientY - drag.y), view.z);
+    draw();
+  });
+  root.addEventListener('pointerup', (e) => {
+    const d = drag;
+    drag = null;
+    if (!d || d.moved || !onPick) return;
+    const r = root.getBoundingClientRect();
+    const hit = hits.find((h) => Math.hypot(h.x - (e.clientX - r.left), h.y - (e.clientY - r.top)) < 18);
+    if (hit) onPick(hit.name);
+  });
+
+  let hits = [];
+
+  function fit(points) {
+    const w = root.clientWidth;
+    const h = root.clientHeight;
+    const lats = points.map((p) => p.lat);
+    const lons = points.map((p) => p.lon);
+    view.lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+    view.lon = (Math.min(...lons) + Math.max(...lons)) / 2;
+    let z = 16;
+    for (; z > 2; z--) {
+      const dx = lonToX(Math.max(...lons), z) - lonToX(Math.min(...lons), z);
+      const dy = latToY(Math.min(...lats), z) - latToY(Math.max(...lats), z);
+      if (dx < w * 0.7 && dy < h * 0.7) break;
+    }
+    view.z = z;
+  }
+
+  function draw() {
+    const w = root.clientWidth;
+    const h = root.clientHeight;
+    if (!w || !h) return;
+
+    const list = feedsFn().filter((f) => f.t && f.t.sensorLat !== null && f.t.sensorLon !== null);
+
+    if (view.follow && list.length) {
+      const pts = [];
+      for (const f of list) {
+        pts.push({ lat: f.t.sensorLat, lon: f.t.sensorLon });
+        if (f.t.frameCenterLat !== null) pts.push({ lat: f.t.frameCenterLat, lon: f.t.frameCenterLon });
+      }
+      if (!view.fitted) { fit(pts); view.fitted = true; } else {
+        view.lat = pts.reduce((a, p) => a + p.lat, 0) / pts.length;
+        view.lon = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
+      }
+    }
+    followBtn.style.color = view.follow ? 'var(--amber)' : '';
+
+    const cx = lonToX(view.lon, view.z);
+    const cy = latToY(view.lat, view.z);
+    const X = (lon) => lonToX(lon, view.z) - cx + w / 2;
+    const Y = (lat) => latToY(lat, view.z) - cy + h / 2;
+
+    // basemap
+    const b = basemaps[base.value];
+    credit.textContent = b.credit || '';
+    const want = new Map();
+    if (b.url) {
+      const n = 2 ** view.z;
+      for (let tx = Math.floor((cx - w / 2) / TILE); tx <= Math.floor((cx + w / 2) / TILE); tx++) {
+        for (let ty = Math.floor((cy - h / 2) / TILE); ty <= Math.floor((cy + h / 2) / TILE); ty++) {
+          if (ty < 0 || ty >= n) continue;
+          const wx = ((tx % n) + n) % n;
+          want.set(view.z + '/' + wx + '/' + ty + '@' + tx, { src: b.url.replace('{z}', view.z).replace('{x}', wx).replace('{y}', ty), left: Math.round(tx * TILE - cx + w / 2), top: Math.round(ty * TILE - cy + h / 2) });
+        }
+      }
+    }
+    for (const img of [...tiles.children]) {
+      const k = img.getAttribute('data-k');
+      if (!want.has(k)) { img.remove(); continue; }
+      const p = want.get(k);
+      img.style.left = p.left + 'px';
+      img.style.top = p.top + 'px';
+      want.delete(k);
+    }
+    for (const [k, p] of want) {
+      tiles.append(el('img', { class: 'tile', 'data-k': k, src: p.src, alt: '', draggable: 'false', style: 'left:' + p.left + 'px;top:' + p.top + 'px' }));
+    }
+
+    // drawing
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const g = canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+
+    if (!b.url) {
+      // graticule, with a spacing that suits the zoom
+      const span = xToLon(cx + w / 2, view.z) - xToLon(cx - w / 2, view.z);
+      const step = [45, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001].find((x) => span / x >= 3) || 0.001;
+      const digits = step >= 1 ? 0 : String(step).split('.')[1].length;
+      g.strokeStyle = '#243444';
+      g.fillStyle = '#5f7488';
+      g.lineWidth = 1;
+      g.font = '11px system-ui, sans-serif';
+      const lon0 = Math.ceil(xToLon(cx - w / 2, view.z) / step) * step;
+      for (let lon = lon0; lon <= xToLon(cx + w / 2, view.z); lon += step) {
+        g.beginPath(); g.moveTo(X(lon), 0); g.lineTo(X(lon), h); g.stroke();
+        g.fillText(lon.toFixed(digits), X(lon) + 3, h - 5);
+      }
+      const lat0 = Math.ceil(yToLat(cy + h / 2, view.z) / step) * step;
+      for (let lat = lat0; lat <= yToLat(cy - h / 2, view.z); lat += step) {
+        g.beginPath(); g.moveTo(0, Y(lat)); g.lineTo(w, Y(lat)); g.stroke();
+        g.fillText(lat.toFixed(digits), 4, Y(lat) - 3);
+      }
+    }
+
+    const stroke = (color, width, dash) => {
+      g.setLineDash(dash || []);
+      g.lineJoin = 'round';
+      g.strokeStyle = 'rgba(10, 15, 21, 0.85)';
+      g.lineWidth = width + 2.5;
+      g.stroke();
+      g.strokeStyle = color;
+      g.lineWidth = width;
+      g.stroke();
+      g.setLineDash([]);
+    };
+
+    hits = [];
+    for (const f of list) {
+      const t = f.t;
+      const sx = X(t.sensorLon);
+      const sy = Y(t.sensorLat);
+
+      // where the aircraft has been
+      if (t.track && t.track.length > 1) {
+        g.beginPath();
+        t.track.forEach((p, i) => (i ? g.lineTo(X(p.lon), Y(p.lat)) : g.moveTo(X(p.lon), Y(p.lat))));
+        stroke('#55b8a8', 2);
+      }
+
+      // what the sensor sees
+      const fp = footprint(t);
+      if (fp) {
+        g.beginPath();
+        fp.points.forEach((p, i) => (i ? g.lineTo(X(p.lon), Y(p.lat)) : g.moveTo(X(p.lon), Y(p.lat))));
+        g.closePath();
+        g.fillStyle = 'rgba(240, 181, 73, 0.25)';
+        g.fill();
+        stroke('#f0b549', 2, fp.estimated ? [6, 4] : null);
+      }
+      if (t.frameCenterLat !== null) {
+        g.beginPath(); g.moveTo(sx, sy); g.lineTo(X(t.frameCenterLon), Y(t.frameCenterLat));
+        stroke('#f0b549', 1.5);
+      }
+
+      // the aircraft, pointing where it is heading
+      g.save();
+      g.translate(sx, sy);
+      g.rotate((t.platformHeading || 0) * Math.PI / 180);
+      g.fillStyle = '#55b8a8';
+      g.strokeStyle = '#0e151d';
+      g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(0, -11); g.lineTo(7, 8); g.lineTo(0, 4); g.lineTo(-7, 8); g.closePath();
+      g.fill(); g.stroke();
+      g.restore();
+
+      g.font = '600 12px system-ui, sans-serif';
+      const label = f.name;
+      const tw = g.measureText(label).width;
+      g.fillStyle = 'rgba(19, 28, 38, 0.85)';
+      g.fillRect(sx + 10, sy - 9, tw + 8, 18);
+      g.fillStyle = '#e8eef4';
+      g.fillText(label, sx + 14, sy + 4);
+
+      hits.push({ name: f.name, x: sx, y: sy });
+    }
+  }
+
+  root.draw = draw;
+  new ResizeObserver(draw).observe(root);
+  return root;
+}
+
+function fmtCoord(lat, lon) {
+  return lat.toFixed(5) + ', ' + lon.toFixed(5);
+}
+
+function telemetryReadout(t) {
+  const rows = [];
+  const add = (k, v) => { if (v) rows.push(el('dt', {}, k), el('dd', {}, v)); };
+  add('Platform', [t.platformDesignation, t.callSign, t.tailNumber].filter(Boolean).join(', '));
+  add('Mission', t.missionID);
+  if (t.sensorLat !== null && t.sensorLon !== null) add('Position', fmtCoord(t.sensorLat, t.sensorLon));
+  if (t.sensorAlt !== null) add('Altitude', Math.round(t.sensorAlt) + ' m');
+  if (t.platformHeading !== null) add('Heading', Math.round(t.platformHeading) + '°');
+  if (t.groundSpeed !== null) add('Speed', Math.round(t.groundSpeed) + ' m/s');
+  if (t.frameCenterLat !== null && t.frameCenterLon !== null) add('Looking at', fmtCoord(t.frameCenterLat, t.frameCenterLon));
+  if (t.slantRange !== null) add('Range', t.slantRange >= 1000 ? (t.slantRange / 1000).toFixed(1) + ' km' : Math.round(t.slantRange) + ' m');
+  if (t.hfov !== null) add('Field of view', t.hfov.toFixed(1) + '°');
+  add('KLV', t.packets + ' packets' + (t.packetsInvalid ? ', ' + t.packetsInvalid + ' invalid' : '') + (t.packetsRepaired ? ', ' + t.packetsRepaired + ' repaired' : ''));
+  return rows;
+}
+
+function renderMapSection(name, c, p) {
+  const t = p && p.telemetry;
+  if (!t) return null;
+  const map = createMap('feed:' + name, () => {
+    const live = state.paths.find((x) => x.name === name);
+    return live && live.telemetry ? [{ name, t: live.telemetry }] : [];
+  });
+  map.id = 'feed-map';
+  return el('section', {},
+    map,
+    el('dl', { class: 'readout', id: 'feed-readout' }, telemetryReadout(t)),
+    el('label', { class: 'switch', style: 'margin:12px 0 0' },
+      el('input', {
+        type: 'checkbox',
+        checked: !!c.klvRepair,
+        onchange: (e) => act(e.target.checked ? 'KLV repair on' : 'KLV repair off', () => saveSettings(name, { klvRepair: e.target.checked })),
+      }),
+      'Repair KLV'));
+}
+
+function updateMaps() {
+  const m = document.getElementById('feed-map') || document.getElementById('all-map');
+  if (m && m.draw) m.draw();
+  const r = document.getElementById('feed-readout');
+  const p = state.paths.find((x) => x.name === state.selected);
+  if (r && p && p.telemetry) r.replaceChildren(...telemetryReadout(p.telemetry));
+}
+
+function renderMapView() {
+  const main = document.getElementById('main');
+  const withPos = () => state.paths.filter((p) => p.telemetry && p.telemetry.sensorLat !== null).map((p) => ({ name: p.name, t: p.telemetry }));
+  if (document.getElementById('all-map')) { updateMaps(); return; }
+  const map = createMap('all', withPos, (name) => {
+    state.view = 'feeds';
+    state.selected = name;
+    for (const o of document.querySelectorAll('.tabs button')) o.setAttribute('aria-selected', String(o.getAttribute('data-view') === 'feeds'));
+    render();
+  });
+  map.id = 'all-map';
+  map.classList.add('big');
+  main.replaceChildren(map);
 }
 
 // ---------- object detection ----------
@@ -1110,8 +1543,9 @@ async function refreshSends() {
 let tick = 0;
 let polling = false;
 
-async function poll() {
-  if (document.hidden || polling) return;
+async function poll(force) {
+  // a page opened in a background tab still loads once, so that it is ready when looked at
+  if ((document.hidden && !force) || polling) return;
   polling = true;
   try {
     if (tick % CONFIG_EVERY === 0) {
@@ -1130,6 +1564,7 @@ async function poll() {
   renderServer();
   if (state.view === 'feeds') updateFeeds();
   else if (state.view === 'wall') renderWall(false);
+  else if (state.view === 'map') renderMapView();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -1295,6 +1730,11 @@ function updateFeeds() {
   updateViewers();
   updateSends();
   updateDetection();
+  // the map section appears as soon as a feed starts carrying metadata
+  const panel = document.querySelector('.detail');
+  const sel = state.paths.find((x) => x.name === state.selected);
+  if (panel && panel.getAttribute('data-telemetry') !== String(!!(sel && sel.telemetry)) && !busy) renderFeeds();
+  updateMaps();
 }
 
 function select(name) {
@@ -1522,7 +1962,11 @@ function renderSendSection(name, c) {
 function renderDetail() {
   const name = state.selected;
   const f = feeds().find((x) => x.name === name);
-  if (!f) { state.selected = null; return null; }
+  if (!f) {
+    // an unknown feed is deselected, but not before the list of feeds has been loaded
+    if (state.connected) state.selected = null;
+    return null;
+  }
 
   const p = f.live;
   const c = f.conf || {};
@@ -1536,6 +1980,7 @@ function renderDetail() {
   const panel = el('aside', {
     class: 'detail',
     'data-key': [name, shown, live, playerURL(shown), !!c.compress, !!derived].join('|'),
+    'data-telemetry': String(!!(p && p.telemetry)),
   });
 
   panel.append(el('header', {},
@@ -1555,6 +2000,9 @@ function renderDetail() {
   panel.append(view);
 
   panel.append(renderAddressSection(shown, shown !== name || !!derived));
+
+  const mapSection = renderMapSection(name, c, p);
+  if (mapSection) panel.append(mapSection);
 
   if (derived) {
     panel.append(el('section', {},
@@ -1826,7 +2274,7 @@ function writeHash() {
 }
 
 function readHash() {
-  const m = /^#(feeds|wall|recordings)(?:\/(.+))?$/.exec(location.hash);
+  const m = /^#(feeds|wall|map|recordings)(?:\/(.+))?$/.exec(location.hash);
   if (!m) return;
   const name = m[2] ? decodeURIComponent(m[2]) : null;
   state.view = m[1];
@@ -1841,6 +2289,7 @@ function render() {
   writeHash();
   if (state.view === 'feeds') renderFeeds();
   else if (state.view === 'wall') renderWall(true);
+  else if (state.view === 'map') renderMapView();
   else renderRecordings();
 }
 
@@ -1865,7 +2314,7 @@ window.addEventListener('hashchange', async () => {
 
 (async () => {
   readHash();
-  await poll();
+  await poll(true);
   if (state.view === 'recordings') { try { await refreshRecordings(); } catch (e) { /* shown as empty */ } }
   if (state.selected) { refreshSends().then(updateSends, () => {}); refreshModels().then(render); }
   render();

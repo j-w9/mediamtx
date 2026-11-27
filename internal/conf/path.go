@@ -266,6 +266,9 @@ type Path struct {
 	CompressAudioBitrate string `json:"compressAudioBitrate"`
 	CompressPathSuffix   string `json:"compressPathSuffix"`
 
+	// Metadata
+	KLVRepair bool `json:"klvRepair"`
+
 	// Object detection
 	Detect              bool    `json:"detect"`
 	DetectModel         string  `json:"detectModel"`

@@ -7,8 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func ptr(v float64) *float64 { return &v }
-
 func TestEncodeDecode(t *testing.T) {
 	tm := time.Date(2024, 5, 6, 7, 8, 9, 123000000, time.UTC)
 
@@ -16,17 +14,19 @@ func TestEncodeDecode(t *testing.T) {
 		Time:                &tm,
 		MissionID:           "MISSION01",
 		PlatformDesignation: "MQ-9",
-		PlatformHeading:     ptr(159.97),
-		PlatformPitch:       ptr(-0.43),
-		SensorLat:           ptr(60.1768),
-		SensorLon:           ptr(128.4267),
-		SensorAlt:           ptr(14190.7),
-		HFOV:                ptr(144.57),
-		FrameCenterLat:      ptr(-10.5423),
-		FrameCenterLon:      ptr(29.1578),
+		PlatformHeading:     new(159.97),
+		PlatformPitch:       new(-0.43),
+		SensorLat:           new(60.1768),
+		SensorLon:           new(128.4267),
+		SensorAlt:           new(14190.7),
+		HFOV:                new(144.57),
+		FrameCenterLat:      new(-10.5423),
+		FrameCenterLon:      new(29.1578),
 		Corners: []Point{
-			{Lat: -10.54, Lon: 29.15}, {Lat: -10.54, Lon: 29.16},
-			{Lat: -10.55, Lon: 29.16}, {Lat: -10.55, Lon: 29.15},
+			{Lat: -10.54, Lon: 29.15},
+			{Lat: -10.54, Lon: 29.16},
+			{Lat: -10.55, Lon: 29.16},
+			{Lat: -10.55, Lon: 29.15},
 		},
 	}
 
@@ -58,7 +58,7 @@ func TestEncodeDecode(t *testing.T) {
 
 func TestRepair(t *testing.T) {
 	now := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
-	good := FromTelemetry(&Telemetry{Time: &now, SensorLat: ptr(10)}).Encode()
+	good := FromTelemetry(&Telemetry{Time: &now, SensorLat: new(10.0)}).Encode()
 
 	// conformant packets are left untouched
 	r, err := RepairPacket(good, now)

@@ -23,6 +23,7 @@ type streamMedia struct {
 	writeRTSP                       func(*description.Media, []*rtp.Packet, time.Time)
 	updateOutDesc                   func(func())
 	inboundFramesInError            *errordumper.Dumper
+	klvProcessor                    func([]byte) []byte
 	parent                          logger.Writer
 
 	outMedia *description.Media
@@ -51,6 +52,7 @@ func (sm *streamMedia) initialize() error {
 			outboundBytes:                   sm.outboundBytes,
 			writeRTSP:                       sm.writeRTSPWrapper,
 			updateOutDesc:                   sm.updateOutDesc,
+			klvProcessor:                    sm.klvProcessor,
 			parent:                          sm.parent,
 		}
 		err := sf.initialize()

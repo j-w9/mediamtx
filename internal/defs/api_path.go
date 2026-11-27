@@ -92,6 +92,7 @@ type APIPath struct {
 	OnlineTime           *time.Time        `json:"onlineTime"`
 	Recording            bool              `json:"recording"`
 	Detection            *APIPathDetection `json:"detection"`
+	Telemetry            *APIPathTelemetry `json:"telemetry"`
 	Source               *APIPathSource    `json:"source"`
 	Tracks2              []APIPathTrack    `json:"tracks2"`
 	ReaderCount          uint64            `json:"readerCount"`

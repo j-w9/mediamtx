@@ -308,6 +308,10 @@ type Stream struct {
 	ReplaceNTP            bool
 	Parent                logger.Writer
 
+	// optional function through which every KLV unit passes before being distributed.
+	// It can inspect the unit and return a modified version of it.
+	KLVProcessor func([]byte) []byte
+
 	outDescMutex sync.RWMutex
 	outDesc      *description.Session
 
@@ -381,6 +385,7 @@ func (s *Stream) Initialize() error {
 			writeRTSP:                       s.writeRTSP,
 			updateOutDesc:                   s.updateOutDesc,
 			inboundFramesInError:            s.inboundFramesInError,
+			klvProcessor:                    s.KLVProcessor,
 			parent:                          s.Parent,
 		}
 		err := sm.initialize()

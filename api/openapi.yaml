@@ -1084,6 +1084,11 @@ components:
           allOf:
             - $ref: "#/components/schemas/PathSource"
           nullable: true
+        telemetry:
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/PathTelemetry"
+          nullable: true
         tracks:
           type: array
           deprecated: true
@@ -1165,6 +1170,9 @@ components:
           description: Forward
           items:
             $ref: "#/components/schemas/PathConfForwardDest"
+        klvRepair:
+          type: boolean
+          description: Metadata
         maxReaders:
           type: integer
           format: int64
