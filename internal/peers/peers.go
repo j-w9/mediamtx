@@ -218,8 +218,8 @@ func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.
 
 		if n, ok := pulled[feed.Source]; ok && feed.Source != "" {
 			feed.PulledBy = n
-		} else if n, ok2 := pulled[feed.SourceCompressed]; ok2 && feed.SourceCompressed != "" {
-			feed.PulledBy = n
+		} else if n2, ok2 := pulled[feed.SourceCompressed]; ok2 && feed.SourceCompressed != "" {
+			feed.PulledBy = n2
 		}
 
 		ret.Feeds = append(ret.Feeds, feed)
