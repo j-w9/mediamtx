@@ -314,6 +314,8 @@ func (p *Core) doAPIConfigInternalUserAdd(req configInternalUserReq) (*conf.Conf
 	id := uuid.New()
 	newIDs = append(newIDs, id)
 
+	p.saveConfOverlay(func(o *overlay) { o.recordUsers(newConf.AuthInternalUsers) })
+
 	return newConf, newIDs, id, nil
 }
 
@@ -331,6 +333,8 @@ func (p *Core) doAPIConfigInternalUserPatch(req configInternalUserReq) (*conf.Co
 		return nil, nil, uuid.Nil, err
 	}
 
+	p.saveConfOverlay(func(o *overlay) { o.recordUsers(newConf.AuthInternalUsers) })
+
 	return newConf, newIDs, req.id, nil
 }
 
@@ -347,6 +351,8 @@ func (p *Core) doAPIConfigInternalUserReplace(req configInternalUserReq) (*conf.
 	if err != nil {
 		return nil, nil, uuid.Nil, err
 	}
+
+	p.saveConfOverlay(func(o *overlay) { o.recordUsers(newConf.AuthInternalUsers) })
 
 	return newConf, newIDs, req.id, nil
 }
@@ -366,6 +372,8 @@ func (p *Core) doAPIConfigInternalUserDelete(req configInternalUserReq) (*conf.C
 	}
 
 	newIDs = append(newIDs[:index], newIDs[index+1:]...)
+
+	p.saveConfOverlay(func(o *overlay) { o.recordUsers(newConf.AuthInternalUsers) })
 
 	return newConf, newIDs, req.id, nil
 }

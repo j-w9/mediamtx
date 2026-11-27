@@ -394,10 +394,15 @@ func (pm *pathManager) doFindPathConf(req defs.PathFindPathConfReq) {
 		return
 	}
 
-	result, err2 := pm.authManager.Authenticate(req.AccessRequest.ToAuthRequest())
-	if err2 != nil {
-		req.Res <- defs.PathFindPathConfRes{Err: err2}
-		return
+	result := &auth.Result{}
+
+	if !compress.IsInternal(req.AccessRequest.Query, req.AccessRequest.IP) {
+		var err2 *auth.Error
+		result, err2 = pm.authManager.Authenticate(req.AccessRequest.ToAuthRequest())
+		if err2 != nil {
+			req.Res <- defs.PathFindPathConfRes{Err: err2}
+			return
+		}
 	}
 
 	req.Res <- defs.PathFindPathConfRes{
@@ -413,7 +418,7 @@ func (pm *pathManager) doDescribe(req defs.PathDescribeReq) {
 		return
 	}
 
-	if !req.AccessRequest.SkipAuth {
+	if !req.AccessRequest.SkipAuth && !compress.IsInternal(req.AccessRequest.Query, req.AccessRequest.IP) {
 		_, err2 := pm.authManager.Authenticate(req.AccessRequest.ToAuthRequest())
 		if err2 != nil {
 			req.Res <- defs.PathDescribeRes{Err: err2}
@@ -442,7 +447,7 @@ func (pm *pathManager) doAddReader(req defs.PathAddReaderReq) {
 
 	result := &auth.Result{}
 
-	if !req.AccessRequest.SkipAuth {
+	if !req.AccessRequest.SkipAuth && !compress.IsInternal(req.AccessRequest.Query, req.AccessRequest.IP) {
 		var authErr *auth.Error
 		result, authErr = pm.authManager.Authenticate(req.AccessRequest.ToAuthRequest())
 		if authErr != nil {
@@ -480,7 +485,7 @@ func (pm *pathManager) doAddPublisher(req defs.PathAddPublisherReq) {
 
 	result := &auth.Result{}
 
-	if !req.AccessRequest.SkipAuth {
+	if !req.AccessRequest.SkipAuth && !compress.IsInternal(req.AccessRequest.Query, req.AccessRequest.IP) {
 		var authErr *auth.Error
 		result, authErr = pm.authManager.Authenticate(req.AccessRequest.ToAuthRequest())
 		if authErr != nil {

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -959,7 +958,7 @@ func (pa *path) startDetecting() {
 
 	pa.detectWorker = &detect.Worker{
 		Conf:   pa.conf,
-		Source: "rtsp://127.0.0.1:" + port + "/" + pa.name + "?" + compress.InternalQuery,
+		Source: "rtsp://127.0.0.1:" + port + "/" + pa.name + "?" + compress.InternalQuery(),
 		Parent: pa,
 	}
 	pa.detectWorker.Start()
@@ -1321,8 +1320,7 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
 
 	// a reader is internal when it comes from this machine and carries the internal marker,
 	// which is used by compression and object detection.
-	if req.AccessRequest.IP != nil && req.AccessRequest.IP.IsLoopback() &&
-		strings.Contains(req.AccessRequest.Query, compress.InternalQuery) {
+	if compress.IsInternal(req.AccessRequest.Query, req.AccessRequest.IP) {
 		if pa.internalReaders == nil {
 			pa.internalReaders = make(map[defs.Reader]struct{})
 		}

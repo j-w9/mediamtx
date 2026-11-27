@@ -116,6 +116,15 @@ func (o *overlay) recordGlobal(in *conf.OptionalGlobal) {
 	o.Global = mergeFields(o.Global, toFields(in))
 }
 
+// recordUsers is called when a user is added, changed or removed. The whole list is saved.
+func (o *overlay) recordUsers(users []conf.AuthInternalUser) {
+	byts, err := json.Marshal(users)
+	if err != nil {
+		return
+	}
+	o.Global = mergeFields(o.Global, map[string]json.RawMessage{"authInternalUsers": byts})
+}
+
 func (o *overlay) recordPathDefaults(in *conf.OptionalPath) {
 	o.PathDefaults = mergeFields(o.PathDefaults, toFields(in))
 }

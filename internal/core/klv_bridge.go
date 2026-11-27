@@ -116,7 +116,7 @@ func (b *klvBridge) runInner() error {
 		Author: b,
 		AccessRequest: defs.PathAccessRequest{
 			Name:     b.baseName,
-			Query:    compress.InternalQuery,
+			Query:    compress.InternalQuery(),
 			SkipAuth: true,
 			IP:       net.IPv4(127, 0, 0, 1),
 		},

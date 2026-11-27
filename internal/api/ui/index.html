@@ -983,6 +983,7 @@ const state = {
   connected: false,
   found: { enabled: false, items: [] }, // video sources found on the network
   peers: [],          // other servers, and the feeds they offer
+  users: [],          // accounts that can use the server
   models: null,       // detection models available on the server
   classFilter: '',    // show only feeds where this class was detected
   sends: null,        // status of the destinations of the selected feed
@@ -1336,7 +1337,76 @@ function renderSettings() {
       field('Send to', takTo),
       field('Video host', takHost),
       el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { takAddresses: lines(takTo.value), takVideoHost: takHost.value.trim() }) }, 'Save'))),
-    renderPeerSettings(g, save)));
+    renderPeerSettings(g, save),
+    renderUserSettings()));
+}
+
+// ---------- users ----------
+
+async function refreshUsers() {
+  try {
+    state.users = (await api('GET', '/config/internal-users/list?itemsPerPage=1000')).items;
+  } catch (e) {
+    state.users = [];
+  }
+}
+
+// what each kind of account can do
+const roles = {
+  Viewer: ['read', 'playback'],
+  Operator: ['publish', 'read', 'playback'],
+  Admin: ['publish', 'read', 'playback', 'api', 'metrics', 'pprof'],
+  Peer: ['api', 'read'],
+};
+
+function roleOf(u) {
+  const a = new Set((u.permissions || []).map((p) => p.action));
+  if (a.has('api') && a.has('publish')) return 'Admin';
+  if (a.has('api')) return a.has('read') ? 'Peer' : 'Admin, settings only';
+  if (a.has('publish')) return 'Operator';
+  return 'Viewer';
+}
+
+function whereOf(u) {
+  const ips = u.ips || [];
+  if (!ips.length) return 'Anywhere';
+  if (ips.every((ip) => ip.startsWith('127.') || ip === '::1')) return 'This machine';
+  return ips.join(', ');
+}
+
+function renderUserSettings() {
+  const text = (ph, type) => el('input', { type: type || 'text', placeholder: ph, spellcheck: 'false', autocomplete: 'off' });
+  const user = text('');
+  const pass = text('', 'password');
+  const role = el('select', {}, Object.keys(roles).map((r) => el('option', { value: r }, r)));
+  const admins = state.users.filter((u) => (u.permissions || []).some((p) => p.action === 'api'));
+  const done = async () => { await refreshUsers(); render(); };
+
+  return el('section', {},
+    el('h2', {}, 'Users'),
+    el('ul', { class: 'rows', style: 'margin-bottom:12px' }, state.users.map((u) => el('li', {},
+      el('span', { class: 'grow' }, u.user === 'any' ? 'Anyone' : u.user),
+      el('span', { class: 'flag' }, roleOf(u)),
+      el('span', { class: 'flag' }, whereOf(u)),
+      el('button', {
+        class: 'btn danger',
+        // the last account that can change settings cannot be removed, or nobody could get back in
+        disabled: admins.length === 1 && admins[0].id === u.id,
+        onclick: () => act('Removed', () => api('DELETE', '/config/internal-users/delete/' + u.id)).then(done),
+      }, 'Remove')))),
+    field('User', user), field('Password', pass), field('Role', role),
+    el('div', { class: 'actions' }, el('button', {
+      class: 'btn primary',
+      onclick: () => act('Added', async () => {
+        if (!user.value.trim() || !pass.value) throw new Error('enter a user and a password');
+        await api('POST', '/config/internal-users/add', {
+          user: user.value.trim(),
+          pass: pass.value,
+          ips: [],
+          permissions: roles[role.value].map((action) => ({ action })),
+        });
+      }).then(done),
+    }, 'Add user')));
 }
 
 function renderPeerSettings(g, save) {
@@ -2031,6 +2101,7 @@ async function poll(force) {
       await refreshConfig();
       await refreshFound();
       await refreshPeers();
+      await refreshUsers();
       if (state.view === 'recordings') await refreshRecordings();
     } else if (document.getElementById('found-dialog').open) {
       await refreshFound();
