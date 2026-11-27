@@ -1,0 +1,1545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaMTX</title>
+<style>
+:root {
+  --bay: #131c26;
+  --panel: #1b2733;
+  --panel-2: #223040;
+  --rail: #2f4154;
+  --ink: #e8eef4;
+  --dim: #93a6b8;
+  --tally: #e5484d;
+  --amber: #f0b549;
+  --signal: #55b8a8;
+  --radius: 6px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bay);
+  color: var(--ink);
+  font: 15px/1.45 "Avenir Next", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+button, input, select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+/* ---------- top bar ---------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  height: 56px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rail);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.bar h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  height: 100%;
+}
+
+.tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 3px 14px 0;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--amber);
+}
+
+.bar .server {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar .server.down { color: var(--tally); }
+
+/* ---------- shared pieces ---------- */
+
+main { padding: 20px; }
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover { border-color: var(--dim); }
+
+.btn.primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #1c1503;
+  font-weight: 600;
+}
+
+.btn.danger { color: #ff9a9d; }
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.toolbar .count { color: var(--dim); }
+
+.toolbar .spacer { flex: 1; }
+
+.empty {
+  max-width: 62ch;
+  margin: 56px auto;
+  color: var(--dim);
+}
+
+.empty h2 {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.empty code, .hint code {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--ink);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.tally {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--rail);
+  flex: none;
+}
+
+.tally.on { background: var(--signal); }
+
+.tally.rec {
+  background: var(--tally);
+  box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.25);
+}
+
+/* ---------- feeds: one channel strip per feed ---------- */
+
+.strips {
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: 20px minmax(140px, 1.4fr) minmax(120px, 1fr) minmax(170px, 1.2fr) 90px 200px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rail);
+  cursor: pointer;
+}
+
+.strip:last-child { border-bottom: 0; }
+
+.strip:hover, .strip.selected { background: var(--panel-2); }
+
+.strip.selected { box-shadow: inset 3px 0 0 var(--amber); }
+
+.strip .name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strip .sub {
+  color: var(--dim);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strip.derived .name { font-weight: 400; padding-left: 14px; }
+.strip.derived .name::before { content: "\21B3  "; color: var(--dim); }
+
+/* bitrate meter: the signal level of each feed */
+.meter .track {
+  height: 6px;
+  background: var(--bay);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.meter .level {
+  height: 100%;
+  width: 0;
+  background: var(--signal);
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.meter .value {
+  font-size: 13px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+.strip .flags {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.flag {
+  font-size: 12px;
+  border: 1px solid var(--rail);
+  border-radius: 999px;
+  padding: 1px 9px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.flag.rec { color: #ff9a9d; border-color: rgba(229, 72, 77, 0.6); }
+.flag.cmp { color: var(--amber); border-color: rgba(240, 181, 73, 0.5); }
+
+/* ---------- detail panel ---------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.layout.with-panel { grid-template-columns: minmax(0, 1fr) minmax(360px, 440px); }
+
+.detail {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+
+.detail header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rail);
+}
+
+.detail header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail section {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rail);
+}
+
+.detail section:last-child { border-bottom: 0; }
+
+.detail h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.screen {
+  background: #000;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border: 0;
+  display: block;
+}
+
+.screen.off {
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  padding: 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.seg button {
+  background: none;
+  border: 0;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--dim);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.field label { color: var(--dim); font-size: 14px; }
+
+.field input[type="text"], .field input[type="number"], .field select, dialog input[type="text"] {
+  width: 100%;
+  background: var(--bay);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+
+.copy { display: flex; gap: 6px; min-width: 0; }
+
+.copy input { flex: 1; min-width: 0; text-overflow: ellipsis; }
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.switch input {
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--rail);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  margin: 0;
+}
+
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: left 0.15s ease;
+}
+
+.switch input:checked { background: var(--amber); }
+.switch input:checked::after { left: 19px; background: #1c1503; }
+.switch.rec input:checked { background: var(--tally); }
+.switch.rec input:checked::after { background: #fff; }
+
+.hint {
+  color: var(--dim);
+  font-size: 13px;
+  margin: 6px 0 0;
+  max-width: 60ch;
+}
+
+.rows { list-style: none; margin: 0; padding: 0; }
+
+.rows li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+
+.rows li .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+/* ---------- wall ---------- */
+
+.wall {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+}
+
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tile .cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.tile .cap .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- recordings ---------- */
+
+.rec-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(300px, 420px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.rec-layout .viewer {
+  position: sticky;
+  top: 76px;
+}
+
+.list {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.list button.item {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rail);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.list button.item:last-child { border-bottom: 0; }
+.list button.item:hover, .list button.item[aria-current="true"] { background: var(--panel-2); }
+.list button.item[aria-current="true"] { box-shadow: inset 3px 0 0 var(--amber); }
+.list .item .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .item .n { color: var(--dim); }
+
+video.screen { background: #000; }
+
+.segrow {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rail);
+  font-size: 14px;
+}
+
+.segrow:last-child { border-bottom: 0; }
+.segrow.playing { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--amber); }
+.segrow .dur { color: var(--dim); text-align: right; }
+
+/* ---------- dialog and toast ---------- */
+
+dialog {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 20px;
+  width: min(480px, calc(100vw - 32px));
+}
+
+dialog::backdrop { background: rgba(8, 12, 17, 0.7); }
+
+dialog h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; }
+
+dialog label.block { display: block; color: var(--dim); font-size: 14px; margin: 12px 0 4px; }
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--rail);
+  border-left: 3px solid var(--signal);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  max-width: min(640px, calc(100vw - 32px));
+  z-index: 20;
+}
+
+#toast.error { border-left-color: var(--tally); }
+#toast[hidden] { display: none; }
+
+@media (max-width: 980px) {
+  .layout.with-panel { grid-template-columns: minmax(0, 1fr); }
+  .detail { position: static; max-height: none; }
+  .strip { grid-template-columns: 20px minmax(0, 1fr) minmax(110px, 150px); }
+  .strip .src, .strip .viewers, .strip .flags { display: none; }
+  .rec-layout { grid-template-columns: minmax(0, 1fr); }
+  .rec-layout .viewer { position: static; order: -1; }
+  .wall { grid-template-columns: repeat(min(var(--cols, 3), 2), minmax(0, 1fr)); }
+  .bar { gap: 12px; padding: 0 12px; }
+  .bar .server { display: none; }
+  main { padding: 12px; }
+}
+
+@media (max-width: 560px) {
+  .wall { grid-template-columns: minmax(0, 1fr); }
+  .field { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>MediaMTX</h1>
+  <div class="tabs" role="tablist">
+    <button role="tab" data-view="feeds" aria-selected="true">Feeds</button>
+    <button role="tab" data-view="wall" aria-selected="false">Wall</button>
+    <button role="tab" data-view="recordings" aria-selected="false">Recordings</button>
+  </div>
+  <div class="server" id="server"></div>
+</div>
+
+<main id="main"></main>
+
+<dialog id="add-dialog">
+  <form method="dialog" id="add-form">
+    <h2>Add feed</h2>
+    <label class="block" for="add-name">Name</label>
+    <input type="text" id="add-name" required pattern="[0-9a-zA-Z_\-/\.]+" placeholder="front-door" autocomplete="off">
+    <label class="block" for="add-source">Source address (optional)</label>
+    <input type="text" id="add-source" placeholder="rtsp://192.168.1.20:554/stream" autocomplete="off">
+    <div class="actions">
+      <button class="btn primary" value="ok">Add</button>
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" hidden role="status"></div>
+
+<script>
+'use strict';
+
+// ---------- state ----------
+
+const state = {
+  view: 'feeds',
+  info: null,
+  global: null,
+  paths: [],          // live paths, from the API
+  confs: [],          // path configurations
+  rates: {},          // path name -> inbound bits per second
+  prev: {},           // path name -> {bytes, time}
+  selected: null,     // name of the feed shown in the detail panel
+  variant: 'original',
+  wallCols: 3,
+  recordings: [],
+  recName: null,
+  recSegments: [],
+  recPlaying: null,
+  connected: false,
+  sends: null,        // status of the destinations of the selected feed
+  sendPrev: {},       // destination id -> {bytes, time}
+  sendRates: {},      // destination id -> bits per second
+};
+
+// ---------- helpers ----------
+
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v === null || v === undefined) continue;
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'checked' || k === 'disabled' || k === 'value') e[k] = v;
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+async function api(method, path, body) {
+  const res = await fetch('/v3' + path, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* no body */ }
+  if (!res.ok) {
+    throw new Error((data && data.error) || ('the server replied with status ' + res.status));
+  }
+  return data;
+}
+
+let toastTimer = null;
+
+function toast(text, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = text;
+  t.className = isError ? 'error' : '';
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 8000 : 3500);
+}
+
+function fmtRate(bps) {
+  if (!bps) return '0 kbit/s';
+  if (bps >= 1e6) return (bps / 1e6).toFixed(2) + ' Mbit/s';
+  return Math.round(bps / 1e3) + ' kbit/s';
+}
+
+function fmtDuration(secs) {
+  if (secs === null || secs === undefined) return '';
+  secs = Math.round(secs);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + s + 's';
+}
+
+function fmtSince(iso) {
+  if (!iso) return '';
+  return fmtDuration((Date.now() - new Date(iso).getTime()) / 1000);
+}
+
+// the meter is logarithmic: 50 kbit/s is empty, 20 Mbit/s is full
+function meterWidth(bps) {
+  if (!bps || bps <= 5e4) return bps ? 2 : 0;
+  return Math.min(100, Math.max(2, 100 * Math.log(bps / 5e4) / Math.log(2e7 / 5e4)));
+}
+
+const sourceNames = {
+  rtspSession: 'RTSP',
+  rtspsSession: 'RTSPS',
+  rtmpConn: 'RTMP',
+  rtmpsConn: 'RTMPS',
+  srtConn: 'SRT',
+  webRTCSession: 'WebRTC',
+  moqSession: 'MoQ',
+  rtspSource: 'RTSP camera',
+  rtmpSource: 'RTMP pull',
+  hlsSource: 'HLS pull',
+  srtSource: 'SRT pull',
+  webRTCSource: 'WebRTC pull',
+  moqSource: 'MoQ pull',
+  mpegtsSource: 'MPEG-TS',
+  rtpSource: 'RTP',
+  rpiCameraSource: 'Raspberry Pi camera',
+  redirect: 'Redirect',
+};
+
+const readerNames = {
+  hlsSession: 'HLS',
+  rtmpConn: 'RTMP',
+  rtmpsConn: 'RTMPS',
+  rtspSession: 'RTSP',
+  rtspsSession: 'RTSPS',
+  srtConn: 'SRT',
+  webRTCSession: 'WebRTC',
+  moqSession: 'MoQ',
+};
+
+const kickEndpoints = {
+  hlsSession: '/hls/sessions/kick/',
+  rtmpConn: '/rtmp/conns/kick/',
+  rtmpsConn: '/rtmps/conns/kick/',
+  rtspSession: '/rtsp/sessions/kick/',
+  rtspsSession: '/rtsps/sessions/kick/',
+  srtConn: '/srt/conns/kick/',
+  webRTCSession: '/webrtc/sessions/kick/',
+  moqSession: '/moq/sessions/kick/',
+};
+
+function encodeName(name) {
+  return name.split('/').map(encodeURIComponent).join('/');
+}
+
+function portOf(address) {
+  const i = (address || '').lastIndexOf(':');
+  return i >= 0 ? address.slice(i + 1) : '';
+}
+
+function serverURL(enabled, address, encrypted) {
+  if (!enabled) return null;
+  return (encrypted ? 'https' : 'http') + '://' + location.hostname + ':' + portOf(address);
+}
+
+// address of the page that plays a feed in the browser
+function playerURL(name) {
+  const g = state.global;
+  if (!g) return null;
+  const webrtc = serverURL(g.webrtc, g.webrtcAddress, g.webrtcEncryption);
+  if (webrtc) return webrtc + '/' + encodeName(name) + '/';
+  const hls = serverURL(g.hls, g.hlsAddress, g.hlsEncryption);
+  if (hls) return hls + '/' + encodeName(name) + '/';
+  return null;
+}
+
+function confByName(name) {
+  return state.confs.find((c) => c.name === name) || null;
+}
+
+// settings that apply to a feed: its own, or the shared ones it falls under
+function confOf(name) {
+  const own = confByName(name);
+  if (own) return own;
+  const live = state.paths.find((p) => p.name === name);
+  return live ? confByName(live.confName) : null;
+}
+
+function hasOwnConf(name) {
+  return confByName(name) !== null;
+}
+
+// name of the feed a compressed feed is made from, or null
+function compressedFrom(name) {
+  for (const f of feeds()) {
+    const c = f.conf;
+    if (c && c.compress && f.name + c.compressPathSuffix === name) return f.name;
+  }
+  return null;
+}
+
+// every feed worth showing: live paths plus configured ones that are not live
+function feeds() {
+  const byName = new Map();
+  for (const p of state.paths) {
+    byName.set(p.name, { name: p.name, live: p });
+  }
+  for (const c of state.confs) {
+    if (c.name.startsWith('~') || c.name === 'all_others' || c.name === 'all') continue;
+    if (!byName.has(c.name)) byName.set(c.name, { name: c.name, live: null });
+  }
+  const list = [...byName.values()];
+  for (const f of list) {
+    f.conf = confByName(f.name) || (f.live ? confByName(f.live.confName) : null);
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  return list;
+}
+
+// ---------- changing settings ----------
+
+// Settings are stored per feed. When a feed still uses shared settings,
+// a copy is created for it, so that the change does not affect other feeds.
+async function saveSettings(name, changes) {
+  if (hasOwnConf(name)) {
+    await api('PATCH', '/config/paths/patch/' + encodeName(name), changes);
+  } else {
+    const base = Object.assign({}, confOf(name) || {});
+    delete base.name;
+    await api('POST', '/config/paths/add/' + encodeName(name), Object.assign(base, changes));
+  }
+  await refreshConfig();
+  await refreshPaths();
+}
+
+async function act(label, fn) {
+  try {
+    await fn();
+    if (label) toast(label);
+  } catch (e) {
+    toast(e.message.charAt(0).toUpperCase() + e.message.slice(1), true);
+  }
+  render();
+}
+
+// ---------- data refresh ----------
+
+async function refreshPaths() {
+  const data = await api('GET', '/paths/list?itemsPerPage=1000');
+  const now = Date.now();
+  for (const p of data.items) {
+    const prev = state.prev[p.name];
+    if (prev && now > prev.time && p.inboundBytes >= prev.bytes) {
+      state.rates[p.name] = (p.inboundBytes - prev.bytes) * 8000 / (now - prev.time);
+    } else if (!prev) {
+      state.rates[p.name] = null;
+    }
+    state.prev[p.name] = { bytes: p.inboundBytes, time: now };
+  }
+  state.paths = data.items;
+}
+
+async function refreshConfig() {
+  const [global, confs] = await Promise.all([
+    api('GET', '/config/global/get'),
+    api('GET', '/config/paths/list?itemsPerPage=1000'),
+  ]);
+  state.global = global;
+  state.confs = confs.items;
+}
+
+async function refreshRecordings() {
+  const data = await api('GET', '/recordings/list?itemsPerPage=1000');
+  state.recordings = data.items;
+  if (state.recName && !state.recordings.some((r) => r.name === state.recName)) {
+    state.recName = null;
+  }
+  const cur = state.recordings.find((r) => r.name === state.recName);
+  state.recSegments = cur ? cur.segments.slice().reverse() : [];
+}
+
+// The page asks the server for news every 3 seconds, and only for the list of feeds.
+// Settings change rarely, so they are fetched every 30 seconds and after each change.
+// Nothing is requested, and no video is played, while the page is not visible.
+const POLL_MS = 3000;
+const CONFIG_EVERY = 10;
+
+// status of the places the selected feed is being sent to
+async function refreshSends() {
+  const name = state.selected;
+  if (!name) { state.sends = null; return; }
+  const c = confOf(name) || {};
+  const get = async (n) => {
+    try {
+      return (await api('GET', '/paths/forward-dests/list?itemsPerPage=1000&path=' + encodeURIComponent(n))).items;
+    } catch (e) {
+      return []; // the feed is not live
+    }
+  };
+  const original = await get(name);
+  const compressed = c.compress ? await get(name + c.compressPathSuffix) : [];
+  const now = Date.now();
+  for (const d of original.concat(compressed)) {
+    const prev = state.sendPrev[d.id];
+    if (prev && now > prev.time && d.outboundBytes >= prev.bytes) {
+      state.sendRates[d.id] = (d.outboundBytes - prev.bytes) * 8000 / (now - prev.time);
+    }
+    state.sendPrev[d.id] = { bytes: d.outboundBytes, time: now };
+  }
+  if (state.selected === name) state.sends = { name, original, compressed };
+}
+
+let tick = 0;
+let polling = false;
+
+async function poll() {
+  if (document.hidden || polling) return;
+  polling = true;
+  try {
+    if (tick % CONFIG_EVERY === 0) {
+      state.info = await api('GET', '/info');
+      await refreshConfig();
+      if (state.view === 'recordings') await refreshRecordings();
+    }
+    await refreshPaths();
+    if (state.view === 'feeds' && state.selected) await refreshSends();
+    state.connected = true;
+  } catch (e) {
+    state.connected = false;
+  }
+  polling = false;
+  tick++;
+  renderServer();
+  if (state.view === 'feeds') updateFeeds();
+  else if (state.view === 'wall') renderWall(false);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // stop every live player: video is by far what uses the most bandwidth
+    for (const f of document.querySelectorAll('iframe.screen')) {
+      f.replaceWith(el('div', { class: 'screen off' }, 'Paused'));
+    }
+    state.prev = {};
+  } else {
+    tick = 0;
+    poll().then(render);
+  }
+});
+
+// ---------- top bar ----------
+
+function renderServer() {
+  const s = document.getElementById('server');
+  if (!state.connected) {
+    s.textContent = 'Server unreachable';
+    s.className = 'server down';
+    return;
+  }
+  const live = state.paths.filter((p) => p.available).length;
+  const viewers = state.paths.reduce((n, p) => n + (p.readerCount || 0), 0);
+  s.className = 'server';
+  s.textContent = live + ' live, ' + viewers + (viewers === 1 ? ' viewer' : ' viewers');
+}
+
+// ---------- feeds view ----------
+
+function stripFor(f) {
+  const p = f.live;
+  const derived = compressedFrom(f.name);
+  const rate = p && p.available ? state.rates[f.name] : 0;
+  const tracks = p && p.tracks && p.tracks.length ? p.tracks.join(', ') : '';
+
+  let source = '';
+  if (derived) source = 'Compressed';
+  else if (p && p.source) source = sourceNames[p.source.type] || p.source.type;
+
+  const viewers = p ? (p.readerCount || 0) : 0;
+
+  return el('div', {
+    class: 'strip' + (state.selected === f.name ? ' selected' : '') + (derived ? ' derived' : ''),
+    'data-name': f.name,
+    tabindex: 0,
+    role: 'button',
+    onclick: () => select(f.name),
+    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(f.name); } },
+  },
+  el('span', {
+    class: 'tally' + (p && p.recording ? ' rec' : (p && p.available ? ' on' : '')),
+    title: p && p.recording ? 'Recording' : (p && p.available ? 'Live' : 'Offline'),
+  }),
+  el('div', {}, el('div', { class: 'name' }, f.name), el('div', { class: 'sub' }, tracks || 'Offline')),
+  el('div', { class: 'sub src' }, source),
+  el('div', { class: 'meter' },
+    el('div', { class: 'track' }, el('div', { class: 'level', style: 'width:' + meterWidth(rate) + '%' })),
+    el('div', { class: 'value' }, p && p.available && rate !== null ? fmtRate(rate) : '')),
+  el('div', { class: 'sub viewers' }, viewers + (viewers === 1 ? ' viewer' : ' viewers')),
+  el('div', { class: 'flags' },
+    p && p.recording ? el('span', { class: 'flag rec' }, 'Rec') : null,
+    !derived && f.conf && f.conf.compress ? el('span', { class: 'flag cmp' }, 'Compress') : null));
+}
+
+function renderFeeds() {
+  const main = document.getElementById('main');
+  const list = feeds();
+
+  const toolbar = el('div', { class: 'toolbar' },
+    el('span', { class: 'spacer' }),
+    el('button', { class: 'btn primary', onclick: openAddDialog }, 'Add feed'));
+
+  let body;
+  if (!list.length) {
+    const g = state.global;
+    const rtsp = g && g.rtsp ? 'rtsp://' + location.hostname + ':' + portOf(g.rtspAddress) + '/camera1' : null;
+    body = el('div', { class: 'empty' },
+      el('h2', {}, 'No feeds'),
+      rtsp ? el('p', {}, 'Add one, or publish to ', el('code', {}, rtsp)) : null);
+  } else {
+    body = el('div', { class: 'strips', id: 'strips' }, list.map(stripFor));
+  }
+
+  const layout = el('div', { class: 'layout' + (state.selected ? ' with-panel' : '') },
+    el('div', {}, toolbar, body),
+    state.selected ? renderDetail() : null);
+
+  main.replaceChildren(layout);
+}
+
+// refresh the strips without touching the detail panel, which holds a live player
+function updateFeeds() {
+  const strips = document.getElementById('strips');
+  const list = feeds();
+  if (!strips || strips.children.length !== list.length ||
+    list.some((f, i) => strips.children[i].getAttribute('data-name') !== f.name)) {
+    if (!document.querySelector('.detail :focus')) renderFeeds();
+    return;
+  }
+  list.forEach((f, i) => strips.children[i].replaceWith(stripFor(f)));
+  updateViewers();
+  updateSends();
+}
+
+function select(name) {
+  state.selected = state.selected === name ? null : name;
+  state.variant = 'original';
+  state.sends = null;
+  render();
+  refreshSends().then(updateSends, () => {});
+}
+
+// ---------- detail panel ----------
+
+function screenFor(name, live) {
+  const url = playerURL(name);
+  if (!url) {
+    return el('div', { class: 'screen off' }, 'WebRTC and HLS are off');
+  }
+  if (!live) {
+    return el('div', { class: 'screen off' }, 'Offline');
+  }
+  return el('iframe', { class: 'screen', src: url, allow: 'autoplay; fullscreen', title: 'Live view of ' + name });
+}
+
+function updateViewers() {
+  const holder = document.getElementById('viewers');
+  if (holder) holder.replaceChildren(...viewerRows());
+}
+
+function viewerRows() {
+  const live = state.paths.find((p) => p.name === state.selected);
+  const readers = (live && live.readers) || [];
+  if (!readers.length) return [el('li', {}, el('span', { class: 'grow', style: 'color:var(--dim)' }, 'None'))];
+  return readers.map((r) => el('li', {},
+    el('span', { class: 'grow' }, readerNames[r.type] || r.type),
+    kickEndpoints[r.type] ? el('button', {
+      class: 'btn',
+      onclick: () => act('Disconnected', () => api('POST', kickEndpoints[r.type] + encodeURIComponent(r.id))),
+    }, 'Disconnect') : null));
+}
+
+// ---------- where to get a feed ----------
+
+// every address a feed can be read from, according to the servers that are turned on
+function feedAddresses(name) {
+  const g = state.global;
+  if (!g) return [];
+  const host = location.hostname;
+  const enc = encodeName(name);
+  const list = [];
+
+  if (g.rtsp && g.rtspEncryption !== 'strict') {
+    list.push(['RTSP', 'rtsp://' + host + ':' + portOf(g.rtspAddress) + '/' + enc]);
+  }
+  if (g.rtsp && g.rtspEncryption !== 'no') {
+    list.push(['RTSPS', 'rtsps://' + host + ':' + portOf(g.rtspsAddress) + '/' + enc]);
+  }
+  if (g.rtmp && g.rtmpEncryption !== 'strict') {
+    list.push(['RTMP', 'rtmp://' + host + ':' + portOf(g.rtmpAddress) + '/' + enc]);
+  }
+  if (g.rtmp && g.rtmpEncryption !== 'no') {
+    list.push(['RTMPS', 'rtmps://' + host + ':' + portOf(g.rtmpsAddress) + '/' + enc]);
+  }
+  if (g.srt) {
+    list.push(['SRT', 'srt://' + host + ':' + portOf(g.srtAddress) + '?streamid=read:' + name]);
+  }
+  const hls = serverURL(g.hls, g.hlsAddress, g.hlsEncryption);
+  if (hls) list.push(['HLS', hls + '/' + enc + '/index.m3u8']);
+  const webrtc = serverURL(g.webrtc, g.webrtcAddress, g.webrtcEncryption);
+  if (webrtc) {
+    list.push(['Web page', webrtc + '/' + enc + '/']);
+    list.push(['WHEP', webrtc + '/' + enc + '/whep']);
+  }
+  return list;
+}
+
+function copyText(input) {
+  input.select();
+  const done = () => toast('Copied');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(input.value).then(done, () => toast('Copy failed', true));
+  } else if (document.execCommand('copy')) { // pages opened over plain HTTP cannot use the clipboard API
+    done();
+  } else {
+    toast('Copy failed', true);
+  }
+}
+
+function renderAddressSection(shown, isCompressed) {
+  const list = feedAddresses(shown);
+  const section = el('section', {}, el('h3', {}, isCompressed ? 'Addresses, compressed' : 'Addresses'));
+
+  for (const [label, address] of list) {
+    const input = el('input', { type: 'text', readonly: true, value: address, 'aria-label': label + ' address', onfocus: (e) => e.target.select() });
+    section.append(el('div', { class: 'field addr' },
+      el('label', {}, label),
+      el('div', { class: 'copy' }, input, el('button', { class: 'btn', onclick: () => copyText(input) }, 'Copy'))));
+  }
+
+  return section;
+}
+
+// ---------- sending a feed elsewhere ----------
+
+const sendKinds = [
+  ['rtsp', 'RTSP / MediaMTX', 'rtsp://host:8554/'],
+  ['rtmp', 'RTMP (YouTube, Twitch)', 'rtmp://a.rtmp.youtube.com/live2#stream-key'],
+  ['srt', 'SRT', 'srt://host:8890?streamid=publish:'],
+  ['whip', 'WebRTC (WHIP)', 'whip://host:8889/'],
+  ['moqt', 'MoQ', 'moqt://host:8893/'],
+];
+
+// hide passwords and stream keys when showing an address
+function maskAddress(dest) {
+  return dest.replace(/\/\/[^/@]*@/, '//\u2022\u2022\u2022@').replace(/#.*$/, '#\u2022\u2022\u2022');
+}
+
+function describeCompression(c) {
+  const codec = { h264: 'H.264', h265: 'H.265', av1: 'AV1' }[c.compressVideoCodec] || 'H.264';
+  return codec + ' ' + (c.compressVideoBitrate || '1000k') + (c.compressVideoHeight ? ' ' + c.compressVideoHeight + 'p' : '');
+}
+
+function sendTargets(name) {
+  const c = confOf(name) || {};
+  const compressedName = name + (c.compressPathSuffix || '_compressed');
+  const own = confByName(compressedName);
+  return {
+    c,
+    compressedName,
+    original: (c.forward || []).map((d) => d.dest),
+    compressed: own ? (own.forward || []).map((d) => d.dest) : [],
+  };
+}
+
+async function setDestinations(feedName, dests) {
+  await saveSettings(feedName, { forward: dests.map((dest) => ({ dest })) });
+  await refreshSends();
+}
+
+function sendRows() {
+  const name = state.selected;
+  const t = sendTargets(name);
+  const status = state.sends && state.sends.name === name ? state.sends : { original: [], compressed: [] };
+  const rows = [];
+
+  const row = (dest, compressed, i) => {
+    const st = (compressed ? status.compressed : status.original).find((d) => d.conf && d.conf.dest === dest);
+    let text = 'Waiting';
+    if (compressed && t.c.compressOnDemand) text = 'Paused, compression is on demand';
+    else if (st && st.state === 'forwarding') text = fmtRate(state.sendRates[st.id] || 0);
+    else if (st && st.state === 'error') text = st.lastError || 'Error';
+    else if (st) text = 'Connecting';
+
+    return el('li', {},
+      el('span', { class: 'tally' + (st && st.state === 'forwarding' ? ' on' : (st && st.state === 'error' ? ' rec' : '')) }),
+      el('span', { class: 'grow', title: maskAddress(dest) },
+        el('div', { style: 'overflow:hidden;text-overflow:ellipsis' }, maskAddress(dest)),
+        el('div', { class: 'sub', style: 'color:var(--dim);font-size:13px;white-space:normal' },
+          (compressed ? describeCompression(t.c) + ', ' : '') + text)),
+      el('button', {
+        class: 'btn',
+        onclick: () => act('Stopped', () => {
+          const list = (compressed ? t.compressed : t.original).filter((_, j) => j !== i);
+          return setDestinations(compressed ? t.compressedName : name, list);
+        }),
+      }, 'Stop'));
+  };
+
+  t.original.forEach((d, i) => rows.push(row(d, false, i)));
+  t.compressed.forEach((d, i) => rows.push(row(d, true, i)));
+
+  return rows;
+}
+
+function updateSends() {
+  const holder = document.getElementById('sends');
+  if (holder) holder.replaceChildren(...sendRows());
+}
+
+function renderSendSection(name, c) {
+  const kind = el('select', {}, sendKinds.map(([v, t]) => el('option', { value: v }, t)));
+  const address = el('input', { type: 'text', placeholder: sendKinds[0][2] + name, autocomplete: 'off', spellcheck: 'false' });
+  const version = el('select', {},
+    el('option', { value: 'original' }, 'Original'),
+    el('option', { value: 'compressed' }, 'Compressed (' + describeCompression(c) + ')'));
+
+  kind.addEventListener('change', () => {
+    const k = sendKinds.find((x) => x[0] === kind.value);
+    address.placeholder = k[2] + (k[0] === 'rtmp' ? '' : name);
+  });
+
+  const start = () => act('Started', async () => {
+    const dest = address.value.trim();
+    if (!dest) throw new Error('enter an address');
+    const t = sendTargets(name);
+    if (version.value === 'compressed') {
+      // a compressed copy that is sent somewhere has to be encoded all the time
+      if (!c.compress || c.compressOnDemand) {
+        await saveSettings(name, { compress: true, compressOnDemand: false });
+      }
+      await setDestinations(t.compressedName, t.compressed.concat([dest]));
+    } else {
+      await setDestinations(name, t.original.concat([dest]));
+    }
+  });
+
+  return el('section', {},
+    el('h3', {}, 'Restream'),
+    el('ul', { class: 'rows', id: 'sends' }, sendRows()),
+    el('div', { class: 'field' }, el('label', {}, 'To'), kind),
+    el('div', { class: 'field' }, el('label', {}, 'Address'), address),
+    el('div', { class: 'field' }, el('label', {}, 'Stream'), version),
+    el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: start }, 'Start')));
+}
+
+function renderDetail() {
+  const name = state.selected;
+  const f = feeds().find((x) => x.name === name);
+  if (!f) { state.selected = null; return null; }
+
+  const p = f.live;
+  const c = f.conf || {};
+  const derived = compressedFrom(name);
+  const own = hasOwnConf(name);
+  const live = !!(p && p.available);
+  const compressedName = name + (c.compressPathSuffix || '_compressed');
+  const shown = state.variant === 'compressed' && c.compress ? compressedName : name;
+
+  const panel = el('aside', { class: 'detail' });
+
+  panel.append(el('header', {},
+    el('span', { class: 'tally' + (p && p.recording ? ' rec' : (live ? ' on' : '')) }),
+    el('h2', {}, name),
+    el('button', { class: 'btn', onclick: () => select(name), 'aria-label': 'Close' }, 'Close')));
+
+  // live view
+  const view = el('section', {});
+  view.append(screenFor(shown, live));
+  if (c.compress && !derived) {
+    view.append(el('div', { class: 'actions' },
+      el('div', { class: 'seg' },
+        el('button', { 'aria-pressed': String(state.variant === 'original'), onclick: () => { state.variant = 'original'; render(); } }, 'Original'),
+        el('button', { 'aria-pressed': String(state.variant === 'compressed'), onclick: () => { state.variant = 'compressed'; render(); } }, 'Compressed'))));
+  }
+  panel.append(view);
+
+  panel.append(renderAddressSection(shown, shown !== name || !!derived));
+
+  if (derived) {
+    panel.append(el('section', {},
+      el('button', { class: 'btn', onclick: () => select(derived) }, 'Open ' + derived)));
+    return panel;
+  }
+
+  // recording
+  panel.append(el('section', {},
+    el('label', { class: 'switch rec', style: 'margin:0' },
+      el('input', {
+        type: 'checkbox',
+        checked: !!c.record,
+        onchange: (e) => act(e.target.checked ? 'Recording on' : 'Recording off',
+          () => saveSettings(name, { record: e.target.checked })),
+      }),
+      'Record')));
+
+  // compression
+  const form = {};
+  const fieldRow = (label, input) => el('div', { class: 'field' }, el('label', {}, label), input);
+  const selectOf = (key, options) => {
+    form[key] = el('select', {}, options.map(([v, t]) => el('option', { value: String(v) }, t)));
+    const cur = String(c[key] === undefined ? options[0][0] : c[key]);
+    if (!options.some(([v]) => String(v) === cur)) form[key].append(el('option', { value: cur }, cur));
+    form[key].value = cur;
+    return form[key];
+  };
+  form.compressVideoBitrate = el('input', { type: 'text', value: c.compressVideoBitrate || '1000k', pattern: '[1-9][0-9]*[kKM]?' });
+
+  const comp = el('section', {},
+    el('label', { class: 'switch', style: c.compress ? '' : 'margin:0' },
+      el('input', {
+        type: 'checkbox',
+        checked: !!c.compress,
+        onchange: (e) => act(e.target.checked ? 'Compression on' : 'Compression off',
+          () => saveSettings(name, { compress: e.target.checked })),
+      }),
+      'Compress'));
+
+  if (c.compress) {
+    comp.append(
+      fieldRow('Run', selectOf('compressOnDemand', [['true', 'On demand'], ['false', 'Always']])),
+      fieldRow('Codec', selectOf('compressVideoCodec', [['h264', 'H.264'], ['h265', 'H.265'], ['av1', 'AV1']])),
+      fieldRow('Bitrate', form.compressVideoBitrate),
+      fieldRow('Resolution', selectOf('compressVideoHeight', [[0, 'Original'], [1080, '1080p'], [720, '720p'], [480, '480p'], [360, '360p'], [240, '240p']])),
+      fieldRow('Frame rate', selectOf('compressVideoFPS', [[0, 'Original'], [30, '30'], [25, '25'], [15, '15'], [10, '10'], [5, '5'], [1, '1']])),
+      fieldRow('Quality', selectOf('compressPreset', [['ultrafast', 'Fastest'], ['veryfast', 'Fast'], ['medium', 'Balanced'], ['slow', 'Best']])),
+      fieldRow('Audio', selectOf('compressAudioBitrate', [['', 'Original'], ['96k', 'Opus 96k'], ['64k', 'Opus 64k'], ['32k', 'Opus 32k']])),
+      el('div', { class: 'actions' },
+        el('button', {
+          class: 'btn primary',
+          onclick: () => act('Saved', () => saveSettings(name, {
+            compressOnDemand: form.compressOnDemand.value === 'true',
+            compressVideoCodec: form.compressVideoCodec.value,
+            compressVideoBitrate: form.compressVideoBitrate.value.trim(),
+            compressVideoHeight: Number(form.compressVideoHeight.value),
+            compressVideoFPS: Number(form.compressVideoFPS.value),
+            compressPreset: form.compressPreset.value,
+            compressAudioBitrate: form.compressAudioBitrate.value,
+          })),
+        }, 'Save')));
+  }
+  panel.append(comp);
+
+  // sending elsewhere
+  panel.append(renderSendSection(name, c));
+
+  // viewers
+  panel.append(el('section', {},
+    el('h3', {}, 'Viewers'),
+    el('ul', { class: 'rows', id: 'viewers' }, viewerRows())));
+
+  // feed
+  const about = el('section', {});
+  if (c.source && c.source !== 'publisher') {
+    about.append(el('p', { class: 'hint', style: 'margin:0 0 10px' }, el('code', {}, maskAddress(c.source))));
+  }
+  if (own) {
+    about.append(el('div', { class: 'actions', style: 'margin:0' },
+      el('button', {
+        class: 'btn danger',
+        onclick: () => {
+          if (!window.confirm('Remove ' + name + '?')) return;
+          act('Removed', async () => {
+            await api('DELETE', '/config/paths/delete/' + encodeName(name));
+            state.selected = null;
+            await refreshConfig();
+            await refreshPaths();
+          });
+        },
+      }, 'Remove feed')));
+  }
+  if (about.children.length) panel.append(about);
+
+  return panel;
+}
+
+// ---------- add dialog ----------
+
+function openAddDialog() {
+  const d = document.getElementById('add-dialog');
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-source').value = '';
+  d.showModal();
+}
+
+document.getElementById('add-dialog').addEventListener('close', (e) => {
+  if (e.target.returnValue !== 'ok') return;
+  const name = document.getElementById('add-name').value.trim();
+  const source = document.getElementById('add-source').value.trim();
+  act('Added', async () => {
+    await api('POST', '/config/paths/add/' + encodeName(name), source ? { source } : {});
+    state.selected = name;
+    await refreshConfig();
+    await refreshPaths();
+  });
+});
+
+// ---------- wall view ----------
+
+function wallFeeds() {
+  // show each live feed once, and prefer its compressed copy since it is lighter to play
+  return feeds()
+    .filter((f) => !compressedFrom(f.name) && f.live && f.live.available)
+    .map((f) => ({
+      name: f.name,
+      play: f.conf && f.conf.compress ? f.name + f.conf.compressPathSuffix : f.name,
+      compressed: !!(f.conf && f.conf.compress),
+      recording: f.live.recording,
+    }));
+}
+
+let wallKey = '';
+
+function renderWall(force) {
+  const list = wallFeeds();
+  const key = state.wallCols + '|' + list.map((f) => f.play + (f.recording ? '*' : '')).join('|') + '|' + (playerURL('x') || '');
+  if (!force && key === wallKey && document.getElementById('wall-root')) return;
+  wallKey = key;
+
+  const main = document.getElementById('main');
+
+  const toolbar = el('div', { class: 'toolbar' },
+    el('span', { class: 'spacer' }),
+    el('span', { class: 'count' }, 'Columns'),
+    el('div', { class: 'seg' }, [1, 2, 3, 4].map((n) => el('button', {
+      'aria-pressed': String(state.wallCols === n),
+      onclick: () => { state.wallCols = n; renderWall(true); },
+    }, n))));
+
+  let body;
+  if (!playerURL('x')) {
+    body = el('div', { class: 'empty' }, el('h2', {}, 'WebRTC and HLS are off'));
+  } else if (!list.length) {
+    body = el('div', { class: 'empty' }, el('h2', {}, 'No live feeds'));
+  } else {
+    body = el('div', { class: 'wall', style: '--cols:' + state.wallCols }, list.map((f) => el('div', { class: 'tile' },
+      el('iframe', { class: 'screen', src: playerURL(f.play), loading: 'lazy', allow: 'autoplay; fullscreen', title: 'Live view of ' + f.name }),
+      el('div', { class: 'cap' },
+        el('span', { class: 'tally ' + (f.recording ? 'rec' : 'on') }),
+        el('span', { class: 'grow' }, f.name),
+        f.compressed ? el('span', { class: 'flag cmp' }, 'Compressed') : null))));
+  }
+
+  main.replaceChildren(el('div', { id: 'wall-root' }, toolbar, body));
+}
+
+// ---------- recordings view ----------
+
+function playbackURL() {
+  const g = state.global;
+  return g ? serverURL(g.playback, g.playbackAddress, g.playbackEncryption) : null;
+}
+
+function renderRecordings() {
+  const main = document.getElementById('main');
+  const base = playbackURL();
+
+  if (!state.recordings.length) {
+    main.replaceChildren(el('div', { class: 'empty' },
+      el('h2', {}, 'No recordings')));
+    return;
+  }
+
+  const names = el('div', { class: 'list' }, state.recordings.map((r) => el('button', {
+    class: 'item',
+    'aria-current': String(r.name === state.recName),
+    onclick: () => {
+      state.recName = r.name;
+      state.recPlaying = null;
+      state.recSegments = r.segments.slice().reverse();
+      renderRecordings();
+    },
+  }, el('span', { class: 'grow' }, r.name), el('span', { class: 'n' }, r.segments.length))));
+
+  let right;
+  if (!state.recName) {
+    right = [];
+  } else {
+    const rows = state.recSegments.map((s) => el('div', { class: 'segrow' + (state.recPlaying === s.start ? ' playing' : '') },
+      el('span', {}, new Date(s.start).toLocaleString()),
+      el('span', { class: 'dur' }, fmtDuration(s.duration)),
+      el('button', {
+        class: 'btn',
+        disabled: !base || s.duration === null,
+        onclick: () => { state.recPlaying = s.start; renderRecordings(); },
+      }, 'Play'),
+      el('button', {
+        class: 'btn danger',
+        onclick: () => {
+          if (!window.confirm('Delete this recording?')) return;
+          act('Deleted', async () => {
+            await api('DELETE', '/recordings/segments/delete?path=' + encodeURIComponent(state.recName) +
+              '&start=' + encodeURIComponent(s.start));
+            if (state.recPlaying === s.start) state.recPlaying = null;
+            await refreshRecordings();
+          });
+        },
+      }, 'Delete')));
+
+    let screen;
+    const playing = state.recSegments.find((s) => s.start === state.recPlaying);
+    if (!base) {
+      screen = el('div', { class: 'screen off' },
+        el('div', {},
+          el('p', {}, 'Playback is off'),
+          el('button', {
+            class: 'btn primary',
+            onclick: () => act('Playback on', async () => {
+              await api('PATCH', '/config/global/patch', { playback: true });
+              await refreshConfig();
+            }),
+          }, 'Turn on')));
+    } else if (playing) {
+      screen = el('video', {
+        class: 'screen',
+        controls: true,
+        autoplay: true,
+        preload: 'metadata',
+        src: base + '/get?path=' + encodeURIComponent(state.recName) + '&start=' + encodeURIComponent(playing.start) +
+          '&duration=' + encodeURIComponent(playing.duration) + '&format=mp4',
+      });
+    } else {
+      screen = el('div', { class: 'screen off' }, '');
+    }
+
+    right = [el('div', { class: 'list' }, rows), el('div', { class: 'viewer' }, screen)];
+  }
+
+  main.replaceChildren(el('div', { class: 'rec-layout' }, names, right));
+}
+
+// ---------- routing ----------
+
+function render() {
+  if (state.view === 'feeds') renderFeeds();
+  else if (state.view === 'wall') renderWall(true);
+  else renderRecordings();
+}
+
+for (const b of document.querySelectorAll('.tabs button')) {
+  b.addEventListener('click', async () => {
+    state.view = b.getAttribute('data-view');
+    for (const o of document.querySelectorAll('.tabs button')) {
+      o.setAttribute('aria-selected', String(o === b));
+    }
+    if (state.view === 'recordings') {
+      try { await refreshRecordings(); } catch (e) { toast(e.message, true); }
+    }
+    render();
+  });
+}
+
+(async () => {
+  await poll();
+  render();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>

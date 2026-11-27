@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/bluenviron/mediamtx/internal/auth"
+	"github.com/bluenviron/mediamtx/internal/compress"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/defs"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
@@ -33,6 +34,16 @@ func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
 	clone.RecordMaxPartSize = newPathConf.RecordMaxPartSize
 	clone.RecordSegmentDuration = newPathConf.RecordSegmentDuration
 	clone.RecordDeleteAfter = newPathConf.RecordDeleteAfter
+
+	clone.Compress = newPathConf.Compress
+	clone.CompressOnDemand = newPathConf.CompressOnDemand
+	clone.CompressVideoCodec = newPathConf.CompressVideoCodec
+	clone.CompressVideoBitrate = newPathConf.CompressVideoBitrate
+	clone.CompressVideoHeight = newPathConf.CompressVideoHeight
+	clone.CompressVideoFPS = newPathConf.CompressVideoFPS
+	clone.CompressPreset = newPathConf.CompressPreset
+	clone.CompressAudioBitrate = newPathConf.CompressAudioBitrate
+	clone.CompressPathSuffix = newPathConf.CompressPathSuffix
 
 	clone.RPICameraBrightness = newPathConf.RPICameraBrightness
 	clone.RPICameraContrast = newPathConf.RPICameraContrast
@@ -288,6 +299,13 @@ func (pm *pathManager) doReloadConf(newPaths map[string]*conf.Path) {
 			continue
 		}
 
+		// path is, was or is not anymore the output of an on-demand compression,
+		// and compression settings have changed: delete path
+		if compress.OnDemandCommand(newPaths, newPathConf, pathName) != pa.compressOnDemandCmd {
+			pm.doClosePath(pa)
+			continue
+		}
+
 		// path configuration has changed but can be hot reloaded: reload it
 		if _, ok := confsToReload[newPathConf.Name]; ok {
 			go pa.reloadConf(newPathConf)
@@ -534,6 +552,8 @@ func (pm *pathManager) createPath(
 		wg:                 &pm.wg,
 		externalCmdPool:    pm.externalCmdPool,
 		parent:             pm,
+
+		compressOnDemandCmd: compress.OnDemandCommand(pm.pathConfs, pathConf, name),
 	}
 	pa.initialize()
 	pm.paths[name] = pa

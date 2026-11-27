@@ -109,7 +109,13 @@ func (a *API) Initialize() error {
 	router := gin.New()
 	router.SetTrustedProxies(a.TrustedProxies.ToTrustedProxies()) //nolint:errcheck
 	router.Use(a.middlewarePreflightRequests)
+	router.Use(a.middlewareGzip)
 	router.Use(a.middlewareAuth)
+
+	// web UI
+	router.GET("/", a.onUIRedirect)
+	router.GET("/ui", a.onUIRedirect)
+	router.GET("/ui/", a.onUI)
 
 	group := router.Group("/v3")
 

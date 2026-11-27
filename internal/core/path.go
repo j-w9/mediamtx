@@ -13,6 +13,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/google/uuid"
 
+	"github.com/bluenviron/mediamtx/internal/compress"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/defs"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
@@ -145,6 +146,8 @@ type path struct {
 	onlineTime                     time.Time
 	onUnDemandHook                 func(string)
 	onUnavailableHook              func()
+	compressCmd                    *externalcmd.Cmd
+	compressOnDemandCmd            string
 	onOfflineHook                  func()
 	readers                        map[defs.Reader]struct{}
 	describeRequestsOnHold         []defs.PathDescribeReq
@@ -474,6 +477,22 @@ func (pa *path) doReloadConf(newConf *conf.Path) {
 
 	pa.forwardManager.ReloadConf(newConf.Forward)
 
+	if newConf.Compress != oldConf.Compress ||
+		newConf.CompressOnDemand != oldConf.CompressOnDemand ||
+		newConf.CompressVideoCodec != oldConf.CompressVideoCodec ||
+		newConf.CompressVideoBitrate != oldConf.CompressVideoBitrate ||
+		newConf.CompressVideoHeight != oldConf.CompressVideoHeight ||
+		newConf.CompressVideoFPS != oldConf.CompressVideoFPS ||
+		newConf.CompressPreset != oldConf.CompressPreset ||
+		newConf.CompressAudioBitrate != oldConf.CompressAudioBitrate ||
+		newConf.CompressPathSuffix != oldConf.CompressPathSuffix {
+		pa.stopCompressing()
+
+		if pa.stream != nil {
+			pa.startCompressing()
+		}
+	}
+
 	if pa.recorder != nil &&
 		(newConf.Record != oldConf.Record ||
 			newConf.RecordPath != oldConf.RecordPath ||
@@ -576,7 +595,7 @@ func (pa *path) doDescribe(req defs.PathDescribeReq) {
 		return
 	}
 
-	if pa.conf.HasOnDemandPublisher() {
+	if pa.hasOnDemandPublisher() {
 		if pa.onDemandPublisherState == pathOnDemandStateInitial {
 			pa.onDemandPublisherStart(req.AccessRequest.Query)
 		}
@@ -650,7 +669,7 @@ func (pa *path) doAddPublisher(req defs.PathAddPublisherReq) {
 		pa.setOnline(req.Author.APISourceDescribe(), req.AccessRequest.Query)
 	}
 
-	if pa.conf.HasOnDemandPublisher() && pa.onDemandPublisherState != pathOnDemandStateInitial {
+	if pa.hasOnDemandPublisher() && pa.onDemandPublisherState != pathOnDemandStateInitial {
 		pa.onDemandPublisherReadyTimer.Stop()
 		pa.onDemandPublisherReadyTimer = emptyTimer()
 		pa.onDemandPublisherScheduleClose()
@@ -675,7 +694,7 @@ func (pa *path) doAddReader(req defs.PathAddReaderReq) {
 		return
 	}
 
-	if pa.conf.HasOnDemandPublisher() {
+	if pa.hasOnDemandPublisher() {
 		if pa.onDemandPublisherState == pathOnDemandStateInitial {
 			pa.onDemandPublisherStart(req.AccessRequest.Query)
 		}
@@ -697,7 +716,7 @@ func (pa *path) doRemoveReader(req defs.PathRemoveReaderReq) {
 			if pa.onDemandStaticSourceState == pathOnDemandStateReady {
 				pa.onDemandStaticSourceScheduleClose()
 			}
-		} else if pa.conf.HasOnDemandPublisher() {
+		} else if pa.hasOnDemandPublisher() {
 			if pa.onDemandPublisherState == pathOnDemandStateReady {
 				pa.onDemandPublisherScheduleClose()
 			}
@@ -838,6 +857,39 @@ func (pa *path) SafeConf() *conf.Path {
 	return pa.conf
 }
 
+// startCompressing starts the always-on compression of the stream, if enabled.
+// On-demand compression is instead started by the output path.
+func (pa *path) startCompressing() {
+	if !pa.conf.Compress || pa.conf.CompressOnDemand || compress.IsOutputPath(pa.name, pa.conf) {
+		return
+	}
+
+	pa.Log(logger.Info, "compressing stream into path '%s'", compress.OutputPath(pa.name, pa.conf))
+
+	pa.compressCmd = &externalcmd.Cmd{
+		Label:   "compress",
+		Parent:  pa,
+		Pool:    pa.externalCmdPool,
+		Cmdstr:  compress.Command(pa.conf, pa.name),
+		Restart: true,
+		Env:     pa.ExternalCmdEnv(),
+	}
+	pa.compressCmd.Start()
+}
+
+func (pa *path) stopCompressing() {
+	if pa.compressCmd != nil {
+		pa.compressCmd.Close("")
+		pa.compressCmd = nil
+	}
+}
+
+// hasOnDemandPublisher returns whether the path has a publisher that is started on demand.
+// This happens when runOnDemand is set, or when the path is the output of an on-demand compression.
+func (pa *path) hasOnDemandPublisher() bool {
+	return pa.conf.HasOnDemandPublisher() || pa.compressOnDemandCmd != ""
+}
+
 func (pa *path) ExternalCmdEnv() externalcmd.Environment {
 	_, port, _ := net.SplitHostPort(pa.rtspAddress)
 	env := externalcmd.Environment{
@@ -891,10 +943,19 @@ func (pa *path) onDemandStaticSourceStop(reason string) {
 }
 
 func (pa *path) onDemandPublisherStart(query string) {
+	cnf := pa.conf
+
+	// the path is the output of an on-demand compression: run the compression command
+	if pa.compressOnDemandCmd != "" {
+		cnf = pa.conf.Clone()
+		cnf.RunOnDemand = pa.compressOnDemandCmd
+		cnf.RunOnDemandRestart = true
+	}
+
 	pa.onUnDemandHook = hooks.OnDemand(hooks.OnDemandParams{
 		Logger:          pa,
 		ExternalCmdPool: pa.externalCmdPool,
-		Conf:            pa.conf,
+		Conf:            cnf,
 		ExternalCmdEnv:  pa.ExternalCmdEnv(),
 		Query:           query,
 	})
@@ -997,6 +1058,8 @@ func (pa *path) setAvailable(
 		Query:           publisherQuery,
 	})
 
+	pa.startCompressing()
+
 	if !pa.conf.AlwaysAvailable {
 		pa.setOnline(sourceDesc, publisherQuery)
 	}
@@ -1042,6 +1105,8 @@ func (pa *path) setNotAvailable() {
 	}
 
 	pa.onUnavailableHook()
+
+	pa.stopCompressing()
 
 	if pa.recorder != nil {
 		pa.recorder.Close()
@@ -1140,7 +1205,7 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
 			pa.onDemandStaticSourceCloseTimer.Stop()
 			pa.onDemandStaticSourceCloseTimer = emptyTimer()
 		}
-	} else if pa.conf.HasOnDemandPublisher() {
+	} else if pa.hasOnDemandPublisher() {
 		if pa.onDemandPublisherState == pathOnDemandStateClosing {
 			pa.onDemandPublisherState = pathOnDemandStateReady
 			pa.onDemandPublisherCloseTimer.Stop()

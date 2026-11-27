@@ -96,6 +96,11 @@ func TestConfFromFile(t *testing.T) {
 			RecordMaxPartSize:          50 * 1024 * 1024,
 			RecordSegmentDuration:      3600000000000,
 			RecordDeleteAfter:          86400000000000,
+			CompressOnDemand:           true,
+			CompressVideoCodec:         "h264",
+			CompressVideoBitrate:       "1000k",
+			CompressPreset:             "veryfast",
+			CompressPathSuffix:         "_compressed",
 			RTSPUDPSourcePortRange:     []uint{32768, 60999},
 			MoQTransport:               conf.MoQTransportQUIC,
 			WHEPSTUNGatherTimeout:      5 * conf.Duration(time.Second),
@@ -824,6 +829,43 @@ func TestConfErrors(t *testing.T) {
 				"    recordSegmentDuration: 30m\n" +
 				"    recordDeleteAfter: 20m\n",
 			`'recordDeleteAfter' cannot be lower than 'recordSegmentDuration'`,
+		},
+		{
+			"invalid compress video codec",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    compressVideoCodec: vp8\n",
+			`invalid 'compressVideoCodec': 'vp8' (available values are 'h264', 'h265' and 'av1')`,
+		},
+		{
+			"invalid compress video bitrate",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    compressVideoBitrate: 1000k -f null\n",
+			`invalid 'compressVideoBitrate': '1000k -f null' (it must be a number followed by an optional 'k' or 'M')`,
+		},
+		{
+			"invalid compress preset",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    compressPreset: turbo\n",
+			`invalid 'compressPreset': 'turbo' (available values are ultrafast, superfast, veryfast, ` +
+				`faster, fast, medium, slow, slower, veryslow)`,
+		},
+		{
+			"invalid compress path suffix",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    compressPathSuffix: '_c $(reboot)'\n",
+			`invalid 'compressPathSuffix': can contain only alphanumeric characters, underscore, dot, minus, slash`,
+		},
+		{
+			"compress without RTSP server",
+			"rtsp: no\n" +
+				"paths:\n" +
+				"  my_path:\n" +
+				"    compress: yes\n",
+			`'compress' requires the RTSP server to be enabled, since it is used to exchange streams with FFmpeg`,
 		},
 		{
 			"missing rtpAddress with UDP and no encryption",

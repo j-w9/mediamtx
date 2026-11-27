@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,12 @@ var (
 	reSourcePlaceholderPort = regexp.MustCompile(`:\$G[0-9]+`)
 	reSourcePlaceholder     = regexp.MustCompile(`\$G[0-9]+`)
 )
+
+var compressBitrateRegexp = regexp.MustCompile(`^[1-9][0-9]*[kKM]?$`)
+
+var compressPresets = []string{
+	"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow",
+}
 
 // IsValidPathName checks whether the path name is valid.
 func IsValidPathName(name string) error {
@@ -248,6 +255,17 @@ type Path struct {
 	RecordSegmentDuration Duration     `json:"recordSegmentDuration"`
 	RecordDeleteAfter     Duration     `json:"recordDeleteAfter"`
 
+	// Compression
+	Compress             bool   `json:"compress"`
+	CompressOnDemand     bool   `json:"compressOnDemand"`
+	CompressVideoCodec   string `json:"compressVideoCodec"`
+	CompressVideoBitrate string `json:"compressVideoBitrate"`
+	CompressVideoHeight  int    `json:"compressVideoHeight"`
+	CompressVideoFPS     int    `json:"compressVideoFPS"`
+	CompressPreset       string `json:"compressPreset"`
+	CompressAudioBitrate string `json:"compressAudioBitrate"`
+	CompressPathSuffix   string `json:"compressPathSuffix"`
+
 	// Authentication (deprecated)
 	PublishUser *Credential `json:"publishUser,omitempty" deprecated:"true"`
 	PublishPass *Credential `json:"publishPass,omitempty" deprecated:"true"`
@@ -388,6 +406,13 @@ func (pconf *Path) setDefaults() {
 	pconf.RecordMaxPartSize = 50 * 1024 * 1024
 	pconf.RecordSegmentDuration = 3600 * Duration(time.Second)
 	pconf.RecordDeleteAfter = 24 * 3600 * Duration(time.Second)
+
+	// Compression
+	pconf.CompressOnDemand = true
+	pconf.CompressVideoCodec = "h264"
+	pconf.CompressVideoBitrate = "1000k"
+	pconf.CompressPreset = "veryfast"
+	pconf.CompressPathSuffix = "_compressed"
 
 	// Publisher source
 	pconf.OverridePublisher = true
@@ -926,6 +951,58 @@ func (pconf *Path) validate(
 
 	if pconf.RecordDeleteAfter != 0 && pconf.RecordDeleteAfter < pconf.RecordSegmentDuration {
 		return fmt.Errorf("'recordDeleteAfter' cannot be lower than 'recordSegmentDuration'")
+	}
+
+	// Compression
+
+	switch pconf.CompressVideoCodec {
+	case "h264", "h265", "av1":
+	default:
+		return fmt.Errorf("invalid 'compressVideoCodec': '%s' (available values are 'h264', 'h265' and 'av1')",
+			pconf.CompressVideoCodec)
+	}
+
+	if !compressBitrateRegexp.MatchString(pconf.CompressVideoBitrate) {
+		return fmt.Errorf("invalid 'compressVideoBitrate': '%s' (it must be a number followed by an optional 'k' or 'M')",
+			pconf.CompressVideoBitrate)
+	}
+
+	if pconf.CompressAudioBitrate != "" && !compressBitrateRegexp.MatchString(pconf.CompressAudioBitrate) {
+		return fmt.Errorf("invalid 'compressAudioBitrate': '%s' (it must be a number followed by an optional 'k' or 'M')",
+			pconf.CompressAudioBitrate)
+	}
+
+	if pconf.CompressVideoHeight != 0 && (pconf.CompressVideoHeight < 64 || pconf.CompressVideoHeight > 4320) {
+		return fmt.Errorf("'compressVideoHeight' must be 0 (keep the original height) or between 64 and 4320")
+	}
+
+	if pconf.CompressVideoFPS < 0 || pconf.CompressVideoFPS > 240 {
+		return fmt.Errorf("'compressVideoFPS' must be 0 (keep the original frame rate) or between 1 and 240")
+	}
+
+	if !slices.Contains(compressPresets, pconf.CompressPreset) {
+		return fmt.Errorf("invalid 'compressPreset': '%s' (available values are %s)",
+			pconf.CompressPreset, strings.Join(compressPresets, ", "))
+	}
+
+	if pconf.CompressPathSuffix == "" {
+		return fmt.Errorf("'compressPathSuffix' cannot be empty")
+	}
+
+	err = IsValidPathName("a" + pconf.CompressPathSuffix)
+	if err != nil {
+		return fmt.Errorf("invalid 'compressPathSuffix': %w", err)
+	}
+
+	if pconf.Compress {
+		if !conf.RTSP {
+			return fmt.Errorf("'compress' requires the RTSP server to be enabled, " +
+				"since it is used to exchange streams with FFmpeg")
+		}
+
+		if conf.RTSPEncryption == EncryptionStrict {
+			return fmt.Errorf("'compress' cannot be used when 'rtspEncryption' is 'strict'")
+		}
 	}
 
 	// Authentication (deprecated)

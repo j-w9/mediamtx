@@ -594,6 +594,41 @@ pathDefaults:
   recordDeleteAfter: 1d
 
   ###############################################
+  # Default path settings -> Compression
+
+  # Re-encode the stream with FFmpeg in order to decrease its bitrate,
+  # and publish the result in a second path, whose name is the name of this path
+  # followed by compressPathSuffix. The original stream is left untouched.
+  # FFmpeg must be installed, the RTSP server must be enabled, and the
+  # second path must be allowed by the configuration (it is with "all_others").
+  compress: false
+  # Compress the stream only while someone is reading the compressed path,
+  # and stop a few seconds after the last reader has left (see runOnDemandCloseAfter).
+  # When false, the stream is compressed for as long as it is available,
+  # which is needed in order to record or forward the compressed path.
+  compressOnDemand: true
+  # Video codec of the compressed stream. Available values are "h264", "h265" and "av1".
+  # H265 and AV1 provide a better quality than H264 at the same bitrate, but need
+  # more CPU and are supported by fewer players.
+  compressVideoCodec: h264
+  # Video bitrate of the compressed stream, in bits per second.
+  # Suffixes "k" (kilobits) and "M" (megabits) are supported.
+  compressVideoBitrate: 1000k
+  # Height of the compressed video in pixels. The width is scaled accordingly.
+  # Set to 0 to keep the original resolution.
+  compressVideoHeight: 0
+  # Frame rate of the compressed video. Set to 0 to keep the original frame rate.
+  compressVideoFPS: 0
+  # Encoder speed. Slower presets provide a better quality at the same bitrate but need more CPU.
+  # Available values are ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow.
+  compressPreset: veryfast
+  # Re-encode audio with the Opus codec and this bitrate.
+  # When empty, audio is copied without changes.
+  compressAudioBitrate:
+  # Suffix added to the path name in order to obtain the name of the compressed path.
+  compressPathSuffix: _compressed
+
+  ###############################################
   # Default path settings -> Publisher source (when source is "publisher")
 
   # Allow another client to disconnect the current publisher and publish in its place.

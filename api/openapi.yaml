@@ -1103,6 +1103,27 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AlwaysAvailableTrack"
+        compress:
+          type: boolean
+          description: Compression
+        compressAudioBitrate:
+          type: string
+        compressOnDemand:
+          type: boolean
+        compressPathSuffix:
+          type: string
+        compressPreset:
+          type: string
+        compressVideoBitrate:
+          type: string
+        compressVideoCodec:
+          type: string
+        compressVideoFPS:
+          type: integer
+          format: int64
+        compressVideoHeight:
+          type: integer
+          format: int64
         disablePublisherOverride:
           type: boolean
           nullable: true
