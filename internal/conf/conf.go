@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"slices"
@@ -315,6 +316,15 @@ type Conf struct {
 	PPROFAllowOrigins   *[]string  `json:"pprofAllowOrigins,omitempty" deprecated:"true"`
 	PPROFTrustedProxies IPNetworks `json:"pprofTrustedProxies"`
 
+	// TAK
+	TAK                  bool     `json:"tak"`
+	TAKAddresses         []string `json:"takAddresses"`
+	TAKVideoHost         string   `json:"takVideoHost"`
+	TAKInterval          Duration `json:"takInterval"`
+	TAKClientCert        string   `json:"takClientCert"`
+	TAKClientKey         string   `json:"takClientKey"`
+	TAKServerFingerprint string   `json:"takServerFingerprint"`
+
 	// Playback
 	Playback               bool       `json:"playback"`
 	PlaybackAddress        string     `json:"playbackAddress"`
@@ -473,6 +483,10 @@ func (conf *Conf) setDefaults() {
 	conf.PPROFAddress = ":9999"
 	conf.PPROFServerKey = "server.key"
 	conf.PPROFServerCert = "server.crt"
+
+	// TAK
+	conf.TAKAddresses = []string{"udp://239.2.3.1:6969"}
+	conf.TAKInterval = Duration(2 * time.Second)
 
 	// Playback server
 	conf.PlaybackAddress = ":9996"
@@ -778,6 +792,32 @@ func (conf *Conf) validate(l logger.Writer) error {
 	}
 
 	// Playback
+
+	if conf.TAK {
+		if !conf.RTSP {
+			return fmt.Errorf("'tak' requires the RTSP server to be enabled, since TAK clients read streams with RTSP")
+		}
+
+		if len(conf.TAKAddresses) == 0 {
+			return fmt.Errorf("'takAddresses' cannot be empty when 'tak' is enabled")
+		}
+
+		if conf.TAKInterval < Duration(500*time.Millisecond) {
+			return fmt.Errorf("'takInterval' cannot be lower than 500ms")
+		}
+
+		if (conf.TAKClientCert == "") != (conf.TAKClientKey == "") {
+			return fmt.Errorf("'takClientCert' and 'takClientKey' must be set together")
+		}
+	}
+
+	for _, addr := range conf.TAKAddresses {
+		u, err := url.Parse(addr)
+		if err != nil || (u.Scheme != "udp" && u.Scheme != "tcp" && u.Scheme != "tls") || u.Port() == "" {
+			return fmt.Errorf("invalid TAK address '%s': it must be in the form udp://host:port, "+
+				"tcp://host:port or tls://host:port", addr)
+		}
+	}
 
 	if conf.Playback {
 		if conf.PlaybackAddress == "" {

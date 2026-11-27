@@ -39,6 +39,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/servers/rtsp"
 	"github.com/bluenviron/mediamtx/internal/servers/srt"
 	"github.com/bluenviron/mediamtx/internal/servers/webrtc"
+	"github.com/bluenviron/mediamtx/internal/tak"
 	"github.com/bluenviron/mediamtx/internal/upgrade"
 )
 
@@ -204,6 +205,7 @@ type Core struct {
 	metrics         *metrics.Metrics
 	pprof           *pprof.PPROF
 	recordCleaner   *recordcleaner.Cleaner
+	takPublisher    *tak.Publisher
 	playbackServer  *playback.Server
 	pathManager     *pathManager
 	rtspServer      *rtsp.Server
@@ -1044,6 +1046,26 @@ func (p *Core) createResources(initial bool) error {
 		p.api = i
 	}
 
+	if p.conf.TAK && p.takPublisher == nil {
+		i := &tak.Publisher{
+			Addresses:         p.conf.TAKAddresses,
+			VideoHost:         p.conf.TAKVideoHost,
+			Interval:          p.conf.TAKInterval,
+			ClientCert:        p.conf.TAKClientCert,
+			ClientKey:         p.conf.TAKClientKey,
+			ServerFingerprint: p.conf.TAKServerFingerprint,
+			RTSPAddress:       p.conf.RTSPAddress,
+			PathManager:       p.pathManager,
+			Conf:              p.apiConfigSnapshot,
+			Parent:            p,
+		}
+		err = i.Initialize()
+		if err != nil {
+			return err
+		}
+		p.takPublisher = i
+	}
+
 	if initial && p.confPath != "" {
 		cf := &confwatcher.ConfWatcher{FilePath: p.confPath}
 		err = cf.Initialize()
@@ -1346,6 +1368,22 @@ func (p *Core) closeResources(newConf *conf.Conf) error {
 	if newConf == nil && p.confWatcher != nil {
 		p.confWatcher.Close()
 		p.confWatcher = nil
+	}
+
+	closeTAKPublisher := newConf == nil ||
+		newConf.TAK != p.conf.TAK ||
+		!slices.Equal(newConf.TAKAddresses, p.conf.TAKAddresses) ||
+		newConf.TAKVideoHost != p.conf.TAKVideoHost ||
+		newConf.TAKInterval != p.conf.TAKInterval ||
+		newConf.TAKClientCert != p.conf.TAKClientCert ||
+		newConf.TAKClientKey != p.conf.TAKClientKey ||
+		newConf.TAKServerFingerprint != p.conf.TAKServerFingerprint ||
+		newConf.RTSPAddress != p.conf.RTSPAddress ||
+		closePathManager
+
+	if closeTAKPublisher && p.takPublisher != nil {
+		p.takPublisher.Close()
+		p.takPublisher = nil
 	}
 
 	if p.api != nil {

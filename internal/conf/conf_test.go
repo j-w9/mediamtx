@@ -101,6 +101,7 @@ func TestConfFromFile(t *testing.T) {
 			CompressVideoBitrate:       "1000k",
 			CompressPreset:             "veryfast",
 			CompressPathSuffix:         "_compressed",
+			TAKShare:                   true,
 			DetectDevice:               "auto",
 			DetectModelType:            "auto",
 			DetectFPS:                  2,

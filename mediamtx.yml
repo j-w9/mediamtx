@@ -208,6 +208,34 @@ pprofServerCert: server.crt
 pprofTrustedProxies: []
 
 ###############################################
+# Global settings -> TAK
+
+# Announce streams to TAK clients (ATAK, WinTAK, iTAK) and TAK servers.
+# Each stream that has a position appears on their maps as a marker that carries
+# the address of the video. Streams with KLV metadata are announced as aircraft, together
+# with the area the sensor is looking at. Other streams are announced when a position
+# is set with the "latitude" and "longitude" path settings.
+# When a stream is compressed (see "compress"), the address of the compressed copy is announced.
+tak: false
+# Destinations of announcements. Supported forms are:
+# * udp://239.2.3.1:6969 -> the multicast group on which TAK clients listen by default
+# * udp://host:port -> a single client
+# * tcp://host:8087 -> a TAK server, without encryption
+# * tls://host:8089 -> a TAK server, with TLS
+takAddresses: [udp://239.2.3.1:6969]
+# Host name or IP that TAK clients use to reach this server and read video.
+# When empty, the address of the network interface used to reach each destination is used.
+takVideoHost:
+# Interval between announcements.
+takInterval: 2s
+# Certificate and key used to authenticate against TAK servers that require them (PEM files).
+takClientCert:
+takClientKey:
+# If the certificate of a TAK server is self-signed, provide its fingerprint in order to
+# validate it anyway (see sourceFingerprint for how to obtain it).
+takServerFingerprint:
+
+###############################################
 # Global settings -> Playback server
 
 # Enable the playback server, which allows to download recordings from the server.
@@ -641,6 +669,16 @@ pathDefaults:
   # is moved first and the checksum last, missing or implausible timestamps are replaced
   # with the current time, a missing version is added, and damaged items are dropped.
   klvRepair: false
+
+  ###############################################
+  # Default path settings -> Position and TAK
+
+  # Position of the camera, for streams that do not carry it in their metadata.
+  # It is used to announce the stream to TAK clients. Leave both to 0 when unknown.
+  latitude: 0
+  longitude: 0
+  # Announce the stream to TAK clients, when "tak" is enabled.
+  takShare: true
 
   ###############################################
   # Default path settings -> Object detection

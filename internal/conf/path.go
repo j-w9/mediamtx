@@ -269,6 +269,11 @@ type Path struct {
 	// Metadata
 	KLVRepair bool `json:"klvRepair"`
 
+	// Position and TAK
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	TAKShare  bool    `json:"takShare"`
+
 	// Object detection
 	Detect              bool    `json:"detect"`
 	DetectModel         string  `json:"detectModel"`
@@ -428,6 +433,9 @@ func (pconf *Path) setDefaults() {
 	pconf.CompressVideoBitrate = "1000k"
 	pconf.CompressPreset = "veryfast"
 	pconf.CompressPathSuffix = "_compressed"
+
+	// Position and TAK
+	pconf.TAKShare = true
 
 	// Object detection
 	pconf.DetectDevice = "auto"
@@ -1026,6 +1034,16 @@ func (pconf *Path) validate(
 		if conf.RTSPEncryption == EncryptionStrict {
 			return fmt.Errorf("'compress' cannot be used when 'rtspEncryption' is 'strict'")
 		}
+	}
+
+	// Position
+
+	if pconf.Latitude < -90 || pconf.Latitude > 90 {
+		return fmt.Errorf("'latitude' must be between -90 and 90")
+	}
+
+	if pconf.Longitude < -180 || pconf.Longitude > 180 {
+		return fmt.Errorf("'longitude' must be between -180 and 180")
 	}
 
 	// Object detection

@@ -726,6 +726,23 @@ components:
           type: string
         sysLogPrefix:
           type: string
+        tak:
+          type: boolean
+          description: TAK
+        takAddresses:
+          type: array
+          items:
+            type: string
+        takClientCert:
+          type: string
+        takClientKey:
+          type: string
+        takInterval:
+          type: string
+        takServerFingerprint:
+          type: string
+        takVideoHost:
+          type: string
         udpMaxPayloadSize:
           type: integer
           format: int64
@@ -1173,6 +1190,13 @@ components:
         klvRepair:
           type: boolean
           description: Metadata
+        latitude:
+          type: number
+          format: double
+          description: Position and TAK
+        longitude:
+          type: number
+          format: double
         maxReaders:
           type: integer
           format: int64
@@ -1470,6 +1494,8 @@ components:
           type: string
         srtReadPassphrase:
           type: string
+        takShare:
+          type: boolean
         useAbsoluteTimestamp:
           type: boolean
         whepBearerToken:
