@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Object detection worker of MediaMTX.
 
-It reads a stream with FFmpeg, runs a detection model on some of its frames,
-and prints one JSON document per line on standard output:
+It loads a detection model once and runs it on the streams it is told to analyze.
+Streams are added and removed with JSON commands, one per line, on standard input:
+
+    {"cmd": "add", "id": "1", "source": "rtsp://...", "fps": "2", "conf": 0.4, "keyframes": false}
+    {"cmd": "remove", "id": "1"}
+
+Each stream is read with FFmpeg. Results are printed on standard output, one JSON document per line:
 
     {"type": "info", "classes": [...], "device": "...", "input": [w, h]}
-    {"type": "frame", "t": 1700000000.0, "ms": 12.3, "w": 1280, "h": 720,
+    {"type": "frame", "id": "1", "t": 1700000000.0, "ms": 12.3, "w": 1280, "h": 720,
      "objects": [{"c": 0, "s": 0.91, "b": [x, y, w, h]}]}
+    {"type": "error", "id": "1", "error": "..."}
 
 Boxes are relative to the frame, between 0 and 1.
 
@@ -25,6 +31,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -51,9 +58,14 @@ def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+emit_lock = threading.Lock()
+
+
 def emit(doc):
-    sys.stdout.write(json.dumps(doc, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    line = json.dumps(doc, separators=(",", ":")) + "\n"
+    with emit_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def parse_names(raw):
@@ -401,95 +413,162 @@ def probe(source):
     return int(stream["width"]), int(stream["height"])
 
 
-def run(args):
+RETRY_PAUSE = 5
+
+
+class Stream(threading.Thread):
+    """Analyzes one stream with the shared model, until it is stopped."""
+
+    def __init__(self, sid, params, model, layout, infer_lock):
+        super().__init__(daemon=True)
+        self.sid = sid
+        self.source = params["source"]
+        self.fps = str(params.get("fps", "2"))
+        self.conf = float(params.get("conf", 0.4))
+        self.keyframes = bool(params.get("keyframes", False))
+        self.model = model
+        self.layout = layout
+        self.infer_lock = infer_lock
+        self.stopped = threading.Event()
+        self.ffmpeg = None
+
+    def stop(self):
+        self.stopped.set()
+        # FFmpeg can be stuck writing a frame that nobody is going to read: it is killed, not asked
+        ffmpeg = self.ffmpeg
+        if ffmpeg is not None:
+            ffmpeg.kill()
+
+    def run(self):
+        while not self.stopped.is_set():
+            try:
+                self.analyze()
+            except Exception as e:  # pylint: disable=broad-except
+                if not self.stopped.is_set():
+                    emit({"type": "error", "id": self.sid, "error": str(e)})
+            self.stopped.wait(RETRY_PAUSE)
+
+    def analyze(self):
+        width, height = self.model.width, self.model.height
+        src_w, src_h = probe(self.source)
+        ratio = min(width / src_w, height / src_h)
+
+        # FFmpeg picks the frames, scales them to the size the model wants and pads them,
+        # so that only the few frames that are analyzed are handed over to Python.
+        vf = "fps=%s,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:0:0:color=0x727272" % (
+            self.fps, width, height, width, height)
+        cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
+        if self.source.startswith("rtsp"):
+            cmd += ["-rtsp_transport", "tcp"]
+        # decoding is most of the cost of analyzing a stream. Frames are only fed to a model,
+        # so the deblocking filter is skipped, and so are frames that no other frame depends on.
+        # When only key frames are wanted, nothing else is decoded at all.
+        if self.keyframes:
+            cmd += ["-skip_frame", "nokey"]
+            vf = vf.split(",", 1)[1]
+        else:
+            cmd += ["-skip_loop_filter", "all", "-skip_frame", "noref"]
+        cmd += ["-i", self.source, "-map", "0:v:0", "-an", "-vf", vf, "-fps_mode", "passthrough",
+                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+
+        self.ffmpeg = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        frame_size = width * height * 3
+
+        try:
+            while not self.stopped.is_set():
+                raw = self.ffmpeg.stdout.read(frame_size)
+                if len(raw) < frame_size:
+                    break
+
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+                if self.layout.kind == "yolox":
+                    # YOLOX wants BGR pixels between 0 and 255
+                    tensor = frame[:, :, ::-1].transpose(2, 0, 1).astype(np.float32)
+                else:
+                    tensor = frame.transpose(2, 0, 1).astype(np.float32) / 255.0
+                tensor = np.ascontiguousarray(tensor[None])
+
+                # the model is shared: streams take turns
+                with self.infer_lock:
+                    start = time.time()
+                    output = self.model.infer(tensor)
+                    elapsed = (time.time() - start) * 1000.0
+
+                boxes, scores, ids = decode(output, self.layout, width, height, self.conf)
+                keep = nms(boxes, scores, ids)
+
+                objects = []
+                for i in keep:
+                    x1, y1, x2, y2 = boxes[i] / ratio
+                    x1 = min(max(float(x1), 0.0), src_w)
+                    y1 = min(max(float(y1), 0.0), src_h)
+                    x2 = min(max(float(x2), 0.0), src_w)
+                    y2 = min(max(float(y2), 0.0), src_h)
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    objects.append({
+                        "c": int(ids[i]),
+                        "s": round(float(scores[i]), 3),
+                        "b": [round(x1 / src_w, 4), round(y1 / src_h, 4),
+                              round((x2 - x1) / src_w, 4), round((y2 - y1) / src_h, 4)],
+                    })
+
+                emit({"type": "frame", "id": self.sid, "t": round(time.time(), 3), "ms": round(elapsed, 1),
+                      "w": src_w, "h": src_h, "objects": objects})
+        finally:
+            self.ffmpeg.kill()
+            self.ffmpeg.stdout.close()
+            self.ffmpeg.wait()
+            self.ffmpeg = None
+
+        if not self.stopped.is_set():
+            raise RuntimeError("the stream ended")
+
+
+def serve(args):
+    """Load the model, then analyze the streams requested on standard input."""
     model = load_model(args)
     layout = guess_layout(model.output_shape, model.width, model.height, args.type)
-    names = fill_names(model.names, layout.classes)
-    width, height = model.width, model.height
 
     emit({
         "type": "info",
-        "classes": names,
+        "classes": fill_names(model.names, layout.classes),
         "device": model.device,
-        "input": [width, height],
+        "input": [model.width, model.height],
         "layout": layout.kind,
     })
 
-    src_w, src_h = probe(args.source)
-    ratio = min(width / src_w, height / src_h)
+    infer_lock = threading.Lock()
+    streams = {}
 
-    # FFmpeg picks the frames, scales them to the size the model wants and pads them,
-    # so that only the few frames that are analyzed are handed over to Python.
-    vf = "fps=%s,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:0:0:color=0x727272" % (
-        args.fps, width, height, width, height)
-    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
-    if args.source.startswith("rtsp"):
-        cmd += ["-rtsp_transport", "tcp"]
-    # decoding is most of the cost of analyzing a stream. Frames are only fed to a model,
-    # so the deblocking filter is skipped, and so are frames that no other frame depends on.
-    # When only key frames are wanted, nothing else is decoded at all.
-    if args.keyframes:
-        cmd += ["-skip_frame", "nokey"]
-        vf = vf.split(",", 1)[1]
-    else:
-        cmd += ["-skip_loop_filter", "all", "-skip_frame", "noref"]
-    cmd += ["-i", args.source, "-map", "0:v:0", "-an", "-vf", vf, "-fps_mode", "passthrough",
-            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    def stop_all(*_):
+        for st in streams.values():
+            st.stop()
+        os._exit(0)
 
-    ffmpeg = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    signal.signal(signal.SIGTERM, stop_all)
+    signal.signal(signal.SIGINT, stop_all)
 
-    def stop(*_):
-        ffmpeg.terminate()
-        sys.exit(0)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cmd = json.loads(line)
+        except ValueError:
+            continue
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+        sid = str(cmd.get("id", ""))
+        old = streams.pop(sid, None)
+        if old is not None:
+            old.stop()
 
-    frame_size = width * height * 3
-    try:
-        while True:
-            raw = ffmpeg.stdout.read(frame_size)
-            if len(raw) < frame_size:
-                break
+        if cmd.get("cmd") == "add":
+            streams[sid] = Stream(sid, cmd, model, layout, infer_lock)
+            streams[sid].start()
 
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
-            if layout.kind == "yolox":
-                # YOLOX wants BGR pixels between 0 and 255
-                tensor = frame[:, :, ::-1].transpose(2, 0, 1).astype(np.float32)
-            else:
-                tensor = frame.transpose(2, 0, 1).astype(np.float32) / 255.0
-            tensor = np.ascontiguousarray(tensor[None])
-
-            start = time.time()
-            output = model.infer(tensor)
-            elapsed = (time.time() - start) * 1000.0
-
-            boxes, scores, ids = decode(output, layout, width, height, args.conf)
-            keep = nms(boxes, scores, ids)
-
-            objects = []
-            for i in keep:
-                x1, y1, x2, y2 = boxes[i] / ratio
-                x1 = min(max(float(x1), 0.0), src_w)
-                y1 = min(max(float(y1), 0.0), src_h)
-                x2 = min(max(float(x2), 0.0), src_w)
-                y2 = min(max(float(y2), 0.0), src_h)
-                if x2 <= x1 or y2 <= y1:
-                    continue
-                objects.append({
-                    "c": int(ids[i]),
-                    "s": round(float(scores[i]), 3),
-                    "b": [round(x1 / src_w, 4), round(y1 / src_h, 4),
-                          round((x2 - x1) / src_w, 4), round((y2 - y1) / src_h, 4)],
-                })
-
-            emit({"type": "frame", "t": round(time.time(), 3), "ms": round(elapsed, 1),
-                  "w": src_w, "h": src_h, "objects": objects})
-    finally:
-        ffmpeg.terminate()
-
-    code = ffmpeg.wait()
-    raise RuntimeError("the stream ended (ffmpeg exited with code %d)" % code)
+    # standard input has been closed: the server is gone
+    stop_all()
 
 
 def main():
@@ -499,10 +578,6 @@ def main():
     parser.add_argument("--names", default="", help="text file with the class names of a model on a server")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "gpu"])
     parser.add_argument("--type", default="auto", choices=["auto", "v8", "v5", "yolox"])
-    parser.add_argument("--source", default="", help="stream to analyze")
-    parser.add_argument("--fps", default="2", help="frames to analyze per second")
-    parser.add_argument("--keyframes", action="store_true", help="analyze key frames only")
-    parser.add_argument("--conf", type=float, default=0.4, help="minimum confidence")
     parser.add_argument("--describe", action="store_true", help="print the properties of the model and exit")
     args = parser.parse_args()
 
@@ -510,7 +585,7 @@ def main():
         if args.describe:
             describe(args)
         else:
-            run(args)
+            serve(args)
     except KeyboardInterrupt:
         pass
     except Exception as e:  # pylint: disable=broad-except

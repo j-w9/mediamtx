@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,7 +50,7 @@ func TestWorkerMessages(t *testing.T) {
 	require.Equal(t, []string{}, item.Classes)
 	require.Nil(t, item.LastFrame)
 
-	w.onMessage(&workerMessage{Type: "info", Classes: []string{"person", "car"}, Device: "CPU"})
+	classes := []string{"person", "car"}
 
 	msg := &workerMessage{Type: "frame", MS: 12.5, W: 1280, H: 720}
 	msg.Objects = append(msg.Objects,
@@ -64,12 +66,10 @@ func TestWorkerMessages(t *testing.T) {
 			B [4]float64 `json:"b"`
 		}{C: 7, S: 0.9},
 	)
-	w.onMessage(msg)
+	w.onMessage(msg, classes)
 
 	item = w.APIItem()
 	require.Equal(t, "yolo.onnx", item.Model)
-	require.Equal(t, "CPU", item.Device)
-	require.Equal(t, []string{"person", "car"}, item.Classes)
 	require.NotNil(t, item.LastFrame)
 	require.Equal(t, 12.5, item.InferenceMS)
 	require.Equal(t, 1280, item.FrameWidth)
@@ -80,10 +80,95 @@ func TestWorkerMessages(t *testing.T) {
 	require.Equal(t, "car", item.Seen[0].Class)
 
 	// objects of the previous frame are replaced, classes seen are remembered
-	w.onMessage(&workerMessage{Type: "frame", W: 1280, H: 720})
+	w.onMessage(&workerMessage{Type: "frame", W: 1280, H: 720}, classes)
 	item = w.APIItem()
 	require.Empty(t, item.Objects)
 	require.Len(t, item.Seen, 1)
+
+	// a stream that cannot be read is reported, and its objects are cleared
+	w.onMessage(msg, classes)
+	w.onMessage(&workerMessage{Type: "error", Error: "the stream ended"}, classes)
+	item = w.APIItem()
+	require.Equal(t, "the stream ended", item.Error)
+	require.Empty(t, item.Objects)
+	require.Nil(t, item.LastFrame)
+}
+
+// TestEngineSharing checks that streams that use the same model share one process,
+// with a stand-in for the Python worker.
+func TestEngineSharing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+
+	dir := t.TempDir()
+
+	// a fake interpreter: it ignores the script, announces a model,
+	// and reports one frame for each stream it is asked to analyze.
+	fake := filepath.Join(dir, "python")
+	require.NoError(t, os.WriteFile(fake, []byte(`#!/bin/sh
+echo "$$" >> "`+dir+`/pids"
+echo '{"type":"info","classes":["person","car"],"device":"CPU","input":[640,640]}'
+while read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  case "$line" in
+    *'"cmd":"add"'*)
+      printf '{"type":"frame","id":"%s","ms":1,"w":10,"h":10,' "$id"
+      echo '"objects":[{"c":1,"s":0.9,"b":[0,0,1,1]}]}' ;;
+  esac
+done
+`), 0o755))
+
+	newWorker := func(model string) *Worker {
+		return &Worker{
+			Conf: &conf.Path{
+				DetectPython:    fake,
+				DetectModel:     model,
+				DetectModelsDir: dir,
+				DetectModelType: "auto",
+				DetectDevice:    "cpu",
+				DetectFPS:       2,
+			},
+			Source: "rtsp://127.0.0.1/x",
+			Parent: test.NilLogger,
+		}
+	}
+
+	a := newWorker("one.onnx")
+	b := newWorker("one.onnx")
+	c := newWorker("two.onnx")
+	a.Start()
+	b.Start()
+	c.Start()
+
+	for _, w := range []*Worker{a, b, c} {
+		require.Eventually(t, func() bool {
+			item := w.APIItem()
+			return len(item.Objects) == 1 && item.Objects[0].Class == "car" && item.Device == "CPU"
+		}, 5*time.Second, 20*time.Millisecond)
+	}
+
+	// two models, two processes, although there are three streams
+	require.Same(t, a.engine, b.engine)
+	require.NotSame(t, a.engine, c.engine)
+
+	byts, err := os.ReadFile(filepath.Join(dir, "pids"))
+	require.NoError(t, err)
+	require.Len(t, strings.Fields(string(byts)), 2)
+
+	// the process stays while one of its streams remains
+	a.Close()
+	enginesMutex.Lock()
+	n := len(engines)
+	enginesMutex.Unlock()
+	require.Equal(t, 2, n)
+
+	b.Close()
+	c.Close()
+	enginesMutex.Lock()
+	n = len(engines)
+	enginesMutex.Unlock()
+	require.Equal(t, 0, n)
 }
 
 func TestLocalModels(t *testing.T) {
