@@ -705,7 +705,7 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
     <h2>Add feed</h2>
     <label class="block" for="add-name">Name</label>
     <input type="text" id="add-name" required pattern="[0-9a-zA-Z_\-/\.]+" placeholder="front-door" autocomplete="off">
-    <label class="block" for="add-source">Source address (optional)</label>
+    <label class="block" for="add-source">Source</label>
     <input type="text" id="add-source" placeholder="rtsp://192.168.1.20:554/stream" autocomplete="off">
     <div class="actions">
       <button class="btn primary" value="ok">Add</button>
@@ -715,7 +715,7 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
 </dialog>
 
 <dialog id="found-dialog">
-  <h2>Found on the network</h2>
+  <h2>Found</h2>
   <div id="found-list"></div>
   <div class="actions"><button class="btn" id="found-close">Close</button></div>
 </dialog>
@@ -836,7 +836,7 @@ const sourceNames = {
   moqSource: 'MoQ pull',
   mpegtsSource: 'MPEG-TS',
   rtpSource: 'RTP',
-  rpiCameraSource: 'Raspberry Pi camera',
+  rpiCameraSource: 'Pi camera',
   redirect: 'Redirect',
 };
 
@@ -1020,12 +1020,12 @@ function renderSettings() {
   main.replaceChildren(el('div', { class: 'settings' },
     el('section', {},
       el('h2', {}, 'Discovery'),
-      sw('Look for video sources', !!g.discovery, (e) => save(e.target.checked ? 'Discovery on' : 'Discovery off', { discovery: e.target.checked })),
+      sw('On', !!g.discovery, (e) => save(e.target.checked ? 'Discovery on' : 'Discovery off', { discovery: e.target.checked })),
       field('Multicast groups', groups),
       el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { discoveryMulticast: lines(groups.value) }) }, 'Save'))),
     el('section', {},
       el('h2', {}, 'TAK'),
-      sw('Announce feeds to TAK', !!g.tak, (e) => save(e.target.checked ? 'TAK on' : 'TAK off', { tak: e.target.checked })),
+      sw('On', !!g.tak, (e) => save(e.target.checked ? 'TAK on' : 'TAK off', { tak: e.target.checked })),
       field('Send to', takTo),
       field('Video host', takHost),
       el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { takAddresses: lines(takTo.value), takVideoHost: takHost.value.trim() }) }, 'Save')))));
@@ -1365,7 +1365,7 @@ function telemetryReadout(t) {
   if (t.sensorAlt !== null) add('Altitude', Math.round(t.sensorAlt) + ' m');
   if (t.platformHeading !== null) add('Heading', Math.round(t.platformHeading) + '°');
   if (t.groundSpeed !== null) add('Speed', Math.round(t.groundSpeed) + ' m/s');
-  if (t.frameCenterLat !== null && t.frameCenterLon !== null) add('Looking at', fmtCoord(t.frameCenterLat, t.frameCenterLon));
+  if (t.frameCenterLat !== null && t.frameCenterLon !== null) add('Target', fmtCoord(t.frameCenterLat, t.frameCenterLon));
   if (t.slantRange !== null) add('Range', t.slantRange >= 1000 ? (t.slantRange / 1000).toFixed(1) + ' km' : Math.round(t.slantRange) + ' m');
   if (t.hfov !== null) add('Field of view', t.hfov.toFixed(1) + '°');
   add('KLV', t.packets + ' packets' + (t.packetsInvalid ? ', ' + t.packetsInvalid + ' invalid' : '') + (t.packetsRepaired ? ', ' + t.packetsRepaired + ' repaired' : ''));
@@ -1525,7 +1525,7 @@ function renderDetectSection(name, c, p) {
           if (e.target.checked && !c.detectModel) {
             if (!state.models) await refreshModels();
             const first = state.models.find((m) => !m.error);
-            if (!first) throw new Error('no models found. Put a .onnx file in ' + (c.detectModelsDir || './models'));
+            if (!first) throw new Error('no models in ' + (c.detectModelsDir || './models'));
             changes.detectModel = first.name;
           }
           await saveSettings(name, changes);
@@ -1536,7 +1536,7 @@ function renderDetectSection(name, c, p) {
   if (!c.detect) return section;
 
   const remote = !!c.detectServer;
-  const where = el('select', {}, el('option', { value: 'local' }, 'This server'), el('option', { value: 'remote' }, 'Inference server'));
+  const where = el('select', {}, el('option', { value: 'local' }, 'This server'), el('option', { value: 'remote' }, 'Remote server'));
   where.value = remote ? 'remote' : 'local';
 
   const models = (state.models || []).map((m) => m.name);
@@ -1548,14 +1548,14 @@ function renderDetectSection(name, c, p) {
   const device = el('select', {}, [['auto', 'Auto'], ['cpu', 'CPU'], ['gpu', 'GPU']].map(([v, t]) => el('option', { value: v }, t)));
   device.value = c.detectDevice || 'auto';
   const fps = el('input', { type: 'number', min: '0.1', max: '30', step: '0.1', value: String(c.detectFPS || 2) });
-  const frames = el('select', {}, el('option', { value: 'rate' }, 'By frame rate'), el('option', { value: 'key' }, 'Key frames only (lightest)'));
+  const frames = el('select', {}, el('option', { value: 'rate' }, 'Fixed rate'), el('option', { value: 'key' }, 'Key frames'));
   frames.value = c.detectKeyFramesOnly ? 'key' : 'rate';
   const conf = el('input', { type: 'number', min: '0.05', max: '0.95', step: '0.05', value: String(c.detectConfidence || 0.4) });
 
   const row = field;
   const localRows = [row('Model', modelSelect), row('Device', device)];
   const remoteRows = [row('Server', server), row('Model', modelName)];
-  const fpsRow = row('Frame rate', fps);
+  const fpsRow = row('Rate', fps);
   const toggle = () => {
     for (const r of localRows) r.hidden = where.value !== 'local';
     for (const r of remoteRows) r.hidden = where.value !== 'remote';
@@ -1567,7 +1567,7 @@ function renderDetectSection(name, c, p) {
 
   section.append(
     row('Run on', where), ...localRows, ...remoteRows,
-    row('Analyze', frames), fpsRow, row('Confidence', conf),
+    row('Frames', frames), fpsRow, row('Confidence', conf),
     el('div', { class: 'actions' },
       el('button', {
         class: 'btn primary',
@@ -1821,7 +1821,7 @@ function renderFeeds() {
     const rtsp = g && g.rtsp ? 'rtsp://' + location.hostname + ':' + portOf(g.rtspAddress) + '/camera1' : null;
     body = el('div', { class: 'empty' },
       el('h2', {}, 'No feeds'),
-      rtsp ? el('p', {}, 'Add one, or publish to ', el('code', {}, rtsp)) : null);
+      rtsp ? el('p', {}, el('code', {}, rtsp)) : null);
   } else {
     body = el('div', { class: 'strips', id: 'strips' }, list.map(stripFor));
   }
@@ -1992,7 +1992,7 @@ function copyText(input) {
 
 function renderAddressSection(shown, isCompressed) {
   const list = feedAddresses(shown);
-  const section = el('section', {}, el('h3', {}, isCompressed ? 'Addresses, compressed' : 'Addresses'));
+  const section = el('section', {}, el('h3', {}, 'Addresses'));
 
   for (const [label, address] of list) {
     const input = el('input', { type: 'text', readonly: true, value: address, 'aria-label': label + ' address', onfocus: (e) => e.target.select() });
@@ -2007,10 +2007,10 @@ function renderAddressSection(shown, isCompressed) {
 // ---------- sending a feed elsewhere ----------
 
 const sendKinds = [
-  ['rtsp', 'RTSP / MediaMTX', 'rtsp://host:8554/'],
-  ['rtmp', 'RTMP (YouTube, Twitch)', 'rtmp://a.rtmp.youtube.com/live2#stream-key'],
+  ['rtsp', 'RTSP', 'rtsp://host:8554/'],
+  ['rtmp', 'RTMP', 'rtmp://a.rtmp.youtube.com/live2#stream-key'],
   ['srt', 'SRT', 'srt://host:8890?streamid=publish:'],
-  ['whip', 'WebRTC (WHIP)', 'whip://host:8889/'],
+  ['whip', 'WHIP', 'whip://host:8889/'],
   ['moqt', 'MoQ', 'moqt://host:8893/'],
 ];
 
@@ -2050,7 +2050,7 @@ function sendRows() {
   const row = (dest, compressed, i) => {
     const st = (compressed ? status.compressed : status.original).find((d) => d.conf && d.conf.dest === dest);
     let text = 'Waiting';
-    if (compressed && t.c.compressOnDemand) text = 'Paused, compression is on demand';
+    if (compressed && t.c.compressOnDemand) text = 'Paused';
     else if (st && st.state === 'forwarding') text = fmtRate(state.sendRates[st.id] || 0);
     else if (st && st.state === 'error') text = st.lastError || 'Error';
     else if (st) text = 'Connecting';
@@ -2227,7 +2227,7 @@ function renderDetail() {
   const origRate = state.rates[name];
   const compRate = state.rates[compressedName];
   if (c.compress && origRate && compRate && compRate >= origRate * 0.95) {
-    comp.append(el('p', { class: 'hint', style: 'color:var(--amber)' }, 'Not smaller than the original. Lower the bitrate.'));
+    comp.append(el('p', { class: 'hint', style: 'color:var(--amber)' }, 'Not smaller than original'));
   }
   panel.append(comp);
 
