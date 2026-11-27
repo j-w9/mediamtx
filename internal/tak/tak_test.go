@@ -1,8 +1,20 @@
 package tak
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/pem"
 	"encoding/xml"
+	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -215,4 +227,126 @@ func TestValidateAddress(t *testing.T) {
 	require.NoError(t, ValidateAddress("tls://tak.example.com:8089"))
 	require.Error(t, ValidateAddress("http://tak.example.com:8089"))
 	require.Error(t, ValidateAddress("tcp://tak.example.com"))
+}
+
+func selfSigned(t *testing.T, dir string, name string) (tls.Certificate, string, string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	certFile := filepath.Join(dir, name+".crt")
+	keyFile := filepath.Join(dir, name+".key")
+	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	require.NoError(t, err)
+
+	return cert, certFile, keyFile
+}
+
+// TestSenderTLS checks the connection to a TAK server that uses a self-signed certificate
+// and requires clients to present theirs.
+func TestSenderTLS(t *testing.T) {
+	dir := t.TempDir()
+
+	serverCert, _, _ := selfSigned(t, dir, "server")
+	clientCert, clientCertFile, clientKeyFile := selfSigned(t, dir, "client")
+
+	sum := sha256.Sum256(serverCert.Certificate[0])
+	fingerprint := hex.EncodeToString(sum[:])
+
+	clientPool := x509.NewCertPool()
+	parsed, err := x509.ParseCertificate(clientCert.Certificate[0])
+	require.NoError(t, err)
+	clientPool.AddCert(parsed)
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientPool,
+	})
+	require.NoError(t, err)
+	defer ln.Close()
+
+	recv := make(chan []byte, 4)
+
+	go func() {
+		for {
+			conn, err2 := ln.Accept()
+			if err2 != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 65536)
+				for {
+					n, err3 := conn.Read(buf)
+					if err3 != nil {
+						return
+					}
+					recv <- append([]byte{}, buf[:n]...)
+				}
+			}()
+		}
+	}()
+
+	newPublisher := func(fp string, cert string, key string) *Publisher {
+		return &Publisher{
+			Addresses:         []string{"tls://" + ln.Addr().String()},
+			Interval:          conf.Duration(500 * time.Millisecond),
+			ServerFingerprint: fp,
+			ClientCert:        cert,
+			ClientKey:         key,
+			RTSPAddress:       ":8554",
+			PathManager:       &testPathManager{},
+			Conf: func() *conf.Conf {
+				return &conf.Conf{Paths: map[string]*conf.Path{
+					"camera": {Name: "camera", TAKShare: true, Latitude: 45, Longitude: 9},
+				}}
+			},
+			Parent: test.NilLogger,
+		}
+	}
+
+	// a server whose certificate does not match the fingerprint is not trusted
+	wrong := newPublisher(strings.Repeat("0", 64), clientCertFile, clientKeyFile)
+	require.NoError(t, wrong.Initialize())
+	select {
+	case <-recv:
+		t.Fatal("a message was sent to a server that was not verified")
+	case <-time.After(1500 * time.Millisecond):
+	}
+	wrong.Close()
+
+	p := newPublisher(fingerprint, clientCertFile, clientKeyFile)
+	require.NoError(t, p.Initialize())
+	defer p.Close()
+
+	select {
+	case msg := <-recv:
+		require.Contains(t, string(msg), `callsign="camera"`)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no message received")
+	}
 }
