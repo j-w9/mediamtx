@@ -97,16 +97,15 @@ func source(p *conf.Peer, g *remoteGlobal) func(name string) string {
 		}
 	}
 
-	if base := pushBase(p, g); base != "" {
+	if base := rtspBase(p, g, true); base != "" {
 		return func(name string) string { return base + name }
 	}
 
 	return nil
 }
 
-// pushBase returns the RTSP address of a peer, to be followed by the name of a stream.
-// Streams can be read from it and pushed to it.
-func pushBase(p *conf.Peer, g *remoteGlobal) string {
+// rtspBase returns the RTSP address of a peer, to be followed by the name of a stream.
+func rtspBase(p *conf.Peer, g *remoteGlobal, withCredentials bool) string {
 	u, _ := url.Parse(p.URL)
 	host := u.Hostname()
 
@@ -115,7 +114,7 @@ func pushBase(p *conf.Peer, g *remoteGlobal) string {
 	}
 
 	userinfo := ""
-	if p.User != "" {
+	if withCredentials && p.User != "" {
 		userinfo = url.UserPassword(p.User, p.Pass).String() + "@"
 	}
 
@@ -130,13 +129,30 @@ func pushBase(p *conf.Peer, g *remoteGlobal) string {
 	return scheme + "://" + userinfo + net.JoinHostPort(host, port) + "/"
 }
 
-func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.APIPeer {
-	ret := defs.APIPeer{Name: p.Name, URL: p.URL, Feeds: []defs.APIPeerFeed{}}
+// state is what is known about a peer.
+type state struct {
+	version   string
+	latencyMS float64
+	global    remoteGlobal
+	paths     []remotePath
+	confs     map[string]*remotePathConf
+}
 
+// compressedName returns the name of the compressed copy of a stream, if the peer makes one.
+func (st *state) compressedName(pa *remotePath) string {
+	c := st.confs[pa.ConfName]
+	if c == nil || !c.Compress || strings.HasSuffix(pa.Name, c.CompressPathSuffix) {
+		return ""
+	}
+	return pa.Name + c.CompressPathSuffix
+}
+
+func fetch(ctx context.Context, p *conf.Peer) (*state, error) {
 	tr := &http.Transport{TLSClientConfig: tls.MakeConfig(p.Fingerprint)}
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr, Timeout: requestTimeout}
 
+	st := &state{confs: make(map[string]*remotePathConf)}
 	start := time.Now()
 
 	var info struct {
@@ -144,14 +160,12 @@ func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.
 	}
 	err := get(ctx, hc, p, "/v3/info", &info)
 	if err != nil {
-		ret.Error = err.Error()
-		return ret
+		return nil, err
 	}
 
-	ret.LatencyMS = float64(time.Since(start).Microseconds()) / 1000
-	ret.Version = info.Version
+	st.latencyMS = float64(time.Since(start).Microseconds()) / 1000
+	st.version = info.Version
 
-	var global remoteGlobal
 	var paths struct {
 		Items []remotePath `json:"items"`
 	}
@@ -160,43 +174,96 @@ func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.
 	}
 
 	for path, out := range map[string]any{
-		"/v3/config/global/get":                   &global,
+		"/v3/config/global/get":                   &st.global,
 		"/v3/paths/list?itemsPerPage=1000":        &paths,
 		"/v3/config/paths/list?itemsPerPage=1000": &confs,
 	} {
 		err = get(ctx, hc, p, path, out)
 		if err != nil {
-			ret.Error = err.Error()
-			return ret
+			return nil, err
 		}
+	}
+
+	st.paths = paths.Items
+	for i := range confs.Items {
+		st.confs[confs.Items[i].Name] = &confs.Items[i]
+	}
+
+	return st, nil
+}
+
+// Sources are the addresses from which a stream of a peer can be pulled.
+type Sources struct {
+	Original string
+	// empty when the peer does not make a compressed copy of the stream.
+	Compressed string
+}
+
+// Resolve returns the addresses from which a stream of a peer can be pulled.
+func Resolve(ctx context.Context, p *conf.Peer, feed string) (*Sources, error) {
+	st, err := fetch(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+
+	src := source(p, &st.global)
+	if src == nil {
+		return nil, fmt.Errorf("the peer has neither SRT nor RTSP enabled")
+	}
+
+	for i := range st.paths {
+		if st.paths[i].Name == feed {
+			ret := &Sources{Original: src(feed)}
+			if cn := st.compressedName(&st.paths[i]); cn != "" {
+				ret.Compressed = src(cn)
+			}
+			return ret, nil
+		}
+	}
+
+	return nil, fmt.Errorf("the peer has no stream named '%s'", feed)
+}
+
+// Variant returns what a local path is pulling from a peer: "original", "compressed",
+// or an empty string when the source of the path does not come from the peer.
+func Variant(sources *Sources, current string) string {
+	switch current {
+	case sources.Original:
+		return "original"
+	case sources.Compressed:
+		if current != "" {
+			return "compressed"
+		}
+	}
+	return ""
+}
+
+func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.APIPeer {
+	ret := defs.APIPeer{Name: p.Name, URL: p.URL, Feeds: []defs.APIPeerFeed{}}
+
+	st, err := fetch(ctx, p)
+	if err != nil {
+		ret.Error = err.Error()
+		return ret
 	}
 
 	ret.Reachable = true
-	ret.PushBase = pushBase(p, &global)
+	ret.Version = st.version
+	ret.LatencyMS = st.latencyMS
+	ret.PushBase = rtspBase(p, &st.global, false)
 
-	src := source(p, &global)
-
-	confByName := make(map[string]*remotePathConf)
-	for i := range confs.Items {
-		confByName[confs.Items[i].Name] = &confs.Items[i]
-	}
+	src := source(p, &st.global)
 
 	// compressed copies are offered together with the stream they are made from
 	copies := make(map[string]struct{})
-	for i := range paths.Items {
-		pa := &paths.Items[i]
-		if c := confByName[pa.ConfName]; c != nil && c.Compress && !strings.HasSuffix(pa.Name, c.CompressPathSuffix) {
-			copies[pa.Name+c.CompressPathSuffix] = struct{}{}
+	for i := range st.paths {
+		if cn := st.compressedName(&st.paths[i]); cn != "" {
+			copies[cn] = struct{}{}
 		}
 	}
 
-	pulled := make(map[string]string)
-	for name, pa := range local {
-		pulled[pa.Source] = name
-	}
-
-	for i := range paths.Items {
-		pa := &paths.Items[i]
+	for i := range st.paths {
+		pa := &st.paths[i]
 		if _, ok := copies[pa.Name]; ok {
 			continue
 		}
@@ -206,20 +273,22 @@ func query(ctx context.Context, p *conf.Peer, local map[string]*conf.Path) defs.
 			feed.Tracks = []string{}
 		}
 
-		c := confByName[pa.ConfName]
-		feed.Compressed = c != nil && c.Compress && !strings.HasSuffix(pa.Name, c.CompressPathSuffix)
+		cn := st.compressedName(pa)
+		feed.Compressed = cn != ""
 
-		if src != nil {
-			feed.Source = src(pa.Name)
-			if feed.Compressed {
-				feed.SourceCompressed = src(pa.Name + c.CompressPathSuffix)
+		for name, lp := range local {
+			if lp.PeerName != p.Name || lp.PeerFeed != pa.Name || lp.Regexp != nil {
+				continue
 			}
-		}
-
-		if n, ok := pulled[feed.Source]; ok && feed.Source != "" {
-			feed.PulledBy = n
-		} else if n2, ok2 := pulled[feed.SourceCompressed]; ok2 && feed.SourceCompressed != "" {
-			feed.PulledBy = n2
+			feed.PulledBy = name
+			feed.PulledMode = lp.PeerMode
+			if src != nil {
+				sources := &Sources{Original: src(pa.Name)}
+				if cn != "" {
+					sources.Compressed = src(cn)
+				}
+				feed.PulledVariant = Variant(sources, lp.Source)
+			}
 		}
 
 		ret.Feeds = append(ret.Feeds, feed)

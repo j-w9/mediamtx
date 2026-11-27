@@ -1129,7 +1129,7 @@ func (pa *path) setAvailable(
 	// carries metadata, a track is added to the copy, and it is filled by reading the original.
 	pa.klvBridgeMedia = nil
 	if pa.compressInput != "" && !pa.conf.AlwaysAvailable {
-		if t := pa.parent.tracker(pa.compressInput); t != nil && t.HasData() {
+		if t := pa.parent.tracker(pa.compressInput); t != nil && t.HasTrack() {
 			if medi, _ := findKLV(desc); medi == nil {
 				pa.klvBridgeMedia = newKLVMedia()
 				extended := *desc
@@ -1142,6 +1142,8 @@ func (pa *path) setAvailable(
 	// metadata of the stream is followed, and repaired if requested
 	pa.telemetry = &telemetry.Tracker{}
 	pa.telemetry.SetRepair(pa.conf.KLVRepair)
+	klvMedia, _ := findKLV(strm.OrigDesc)
+	pa.telemetry.SetHasTrack(klvMedia != nil)
 	strm.KLVProcessor = pa.telemetry.Process
 	pa.parent.setTracker(pa.name, pa.telemetry)
 

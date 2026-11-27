@@ -1227,6 +1227,13 @@ components:
         overridePublisher:
           type: boolean
           description: Publisher source
+        peerFeed:
+          type: string
+        peerMode:
+          type: string
+        peerName:
+          type: string
+          description: Peers
         playback:
           type: boolean
           nullable: true

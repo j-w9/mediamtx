@@ -265,6 +265,7 @@ func (a *API) Initialize() error {
 	group.GET("/detect/models/list", a.onDetectModelsList)
 	group.GET("/discovery/list", a.onDiscoveryList)
 	group.GET("/peers/list", a.onPeersList)
+	group.POST("/peers/pull", a.onPeersPull)
 
 	group.GET("/recordings/list", a.onRecordingsList)
 	group.GET("/recordings/get/*name", a.onRecordingsGet)

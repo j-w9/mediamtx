@@ -47,6 +47,9 @@ func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
 	clone.CompressPathSuffix = newPathConf.CompressPathSuffix
 
 	clone.KLVRepair = newPathConf.KLVRepair
+	clone.PeerName = newPathConf.PeerName
+	clone.PeerFeed = newPathConf.PeerFeed
+	clone.PeerMode = newPathConf.PeerMode
 	clone.Latitude = newPathConf.Latitude
 	clone.Longitude = newPathConf.Longitude
 	clone.TAKShare = newPathConf.TAKShare

@@ -208,6 +208,7 @@ type Core struct {
 	pprof           *pprof.PPROF
 	recordCleaner   *recordcleaner.Cleaner
 	takPublisher    *tak.Publisher
+	peerRouter      *peerRouter
 	discoveryFinder *discovery.Finder
 	// read by the API, from other goroutines
 	discoveryFinderAPI atomic.Pointer[discovery.Finder]
@@ -1051,6 +1052,16 @@ func (p *Core) createResources(initial bool) error {
 		p.api = i
 	}
 
+	if p.peerRouter == nil {
+		p.peerRouter = &peerRouter{
+			pathManager: p.pathManager,
+			conf:        p.apiConfigSnapshot,
+			patch:       p.APIConfigPathsPatch,
+			parent:      p,
+		}
+		p.peerRouter.initialize()
+	}
+
 	if p.conf.Discovery && p.discoveryFinder == nil {
 		host, _ := os.Hostname()
 		p.discoveryFinder = &discovery.Finder{
@@ -1384,6 +1395,11 @@ func (p *Core) closeResources(newConf *conf.Conf) error {
 	if newConf == nil && p.confWatcher != nil {
 		p.confWatcher.Close()
 		p.confWatcher = nil
+	}
+
+	if (newConf == nil || closePathManager) && p.peerRouter != nil {
+		p.peerRouter.close()
+		p.peerRouter = nil
 	}
 
 	closeDiscovery := newConf == nil ||

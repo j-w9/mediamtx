@@ -236,6 +236,18 @@ func restoreRedactedGlobalValues(values any, old *Conf) {
 	restoreURLField(rv, "AuthJWTJWKS", old.AuthJWTJWKS)
 	restoreURLField(rv, "ExternalAuthenticationURL", old.AuthHTTPAddress)
 
+	// passwords of peers are matched by peer name
+	if peers := rv.FieldByName("Peers"); peers.IsValid() && !peers.IsNil() {
+		list := *peers.Interface().(*Peers)
+		for i := range list {
+			for _, oldPeer := range old.Peers {
+				if oldPeer.Name == list[i].Name {
+					list[i].Pass = restoreSecret(list[i].Pass, oldPeer.Pass)
+				}
+			}
+		}
+	}
+
 	legacyICEServers := rv.FieldByName("WebRTCICEServers")
 	if !legacyICEServers.IsNil() && old.WebRTCICEServers != nil {
 		servers := *legacyICEServers.Interface().(*[]string)
@@ -286,6 +298,10 @@ func Redact(c *Conf) *Conf {
 	for i := range c.WebRTCICEServers2 {
 		c.WebRTCICEServers2[i].Username = redactSecretString(c.WebRTCICEServers2[i].Username)
 		c.WebRTCICEServers2[i].Password = redactSecretString(c.WebRTCICEServers2[i].Password)
+	}
+
+	for i := range c.Peers {
+		c.Peers[i].Pass = redactSecretString(c.Peers[i].Pass)
 	}
 
 	redactPath(&c.PathDefaults)

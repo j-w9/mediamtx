@@ -7,11 +7,11 @@ type APIPeerFeed struct {
 	Tracks    []string `json:"tracks"`
 	// whether the peer makes a compressed copy of the stream.
 	Compressed bool `json:"compressed"`
-	// values to use as "source" of a path in order to pull the stream and its compressed copy.
-	Source           string `json:"source"`
-	SourceCompressed string `json:"sourceCompressed"`
-	// name of the local path that pulls the stream, if any.
-	PulledBy string `json:"pulledBy"`
+	// name of the local path that pulls the stream, if any, what it has been asked
+	// to pull (original, compressed, auto) and what it is pulling at the moment.
+	PulledBy      string `json:"pulledBy"`
+	PulledMode    string `json:"pulledMode"`
+	PulledVariant string `json:"pulledVariant"`
 }
 
 // APIPeer is the state of a peer.
@@ -23,7 +23,8 @@ type APIPeer struct {
 	Version   string `json:"version"`
 	// time taken by the peer to answer, in milliseconds.
 	LatencyMS float64 `json:"latencyMs"`
-	// address to which streams can be pushed, followed by the name of the stream.
+	// address to which streams can be pushed, to be followed by the name of the stream.
+	// It does not contain credentials.
 	PushBase string        `json:"pushBase"`
 	Feeds    []APIPeerFeed `json:"feeds"`
 }
@@ -31,4 +32,12 @@ type APIPeer struct {
 // APIPeerList is a list of peers.
 type APIPeerList struct {
 	Items []APIPeer `json:"items"`
+}
+
+// APIPeerPull is a request to pull a stream from a peer.
+type APIPeerPull struct {
+	Peer string `json:"peer"`
+	Feed string `json:"feed"`
+	// original, compressed or auto.
+	Mode string `json:"mode"`
 }

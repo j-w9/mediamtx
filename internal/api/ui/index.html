@@ -1247,10 +1247,9 @@ async function refreshPeers() {
   }
 }
 
-function pullFeed(peer, feed, compressed) {
+function pullFeed(peer, feed, mode) {
   return act('Pulling', async () => {
-    await api('POST', '/config/paths/add/' + encodeName(peer.name + '/' + feed.name),
-      { source: compressed ? feed.sourceCompressed : feed.source });
+    await api('POST', '/peers/pull', { peer: peer.name, feed: feed.name, mode });
     await refreshConfig();
     await refreshPaths();
     await refreshPeers();
@@ -1280,6 +1279,8 @@ function renderPeers() {
         el('div', { class: 'sub' }, feed.tracks.join(', ') || 'Offline')),
       el('div', { class: 'acts' }, feed.pulledBy
         ? [
+          el('span', { class: 'flag' + (feed.pulledVariant === 'compressed' ? ' cmp' : ''), style: 'align-self:center' },
+            (feed.pulledMode === 'auto' ? 'Auto, ' : '') + (feed.pulledVariant || feed.pulledMode || 'original')),
           el('button', {
             class: 'btn',
             onclick: () => {
@@ -1298,8 +1299,9 @@ function renderPeers() {
           }, 'Stop'),
         ]
         : [
-          feed.source ? el('button', { class: 'btn primary', onclick: () => pullFeed(peer, feed, false) }, 'Pull') : null,
-          feed.sourceCompressed ? el('button', { class: 'btn', onclick: () => pullFeed(peer, feed, true) }, 'Pull compressed') : null,
+          el('button', { class: 'btn primary', onclick: () => pullFeed(peer, feed, feed.compressed ? 'auto' : 'original') }, 'Pull'),
+          feed.compressed ? el('button', { class: 'btn', onclick: () => pullFeed(peer, feed, 'original') }, 'Original') : null,
+          feed.compressed ? el('button', { class: 'btn', onclick: () => pullFeed(peer, feed, 'compressed') }, 'Compressed') : null,
         ]))))));
 }
 

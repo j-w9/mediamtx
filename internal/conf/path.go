@@ -269,6 +269,11 @@ type Path struct {
 	// Metadata
 	KLVRepair bool `json:"klvRepair"`
 
+	// Peers
+	PeerName string `json:"peerName"`
+	PeerFeed string `json:"peerFeed"`
+	PeerMode string `json:"peerMode"`
+
 	// Position and TAK
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
@@ -1034,6 +1039,19 @@ func (pconf *Path) validate(
 		if conf.RTSPEncryption == EncryptionStrict {
 			return fmt.Errorf("'compress' cannot be used when 'rtspEncryption' is 'strict'")
 		}
+	}
+
+	// Peers
+
+	switch pconf.PeerMode {
+	case "", "original", "compressed", "auto":
+	default:
+		return fmt.Errorf("invalid 'peerMode': '%s' (available values are 'original', 'compressed' and 'auto')",
+			pconf.PeerMode)
+	}
+
+	if (pconf.PeerName == "") != (pconf.PeerFeed == "") {
+		return fmt.Errorf("'peerName' and 'peerFeed' must be set together")
 	}
 
 	// Position

@@ -28,6 +28,11 @@ func newKLVMedia() *description.Media {
 }
 
 func findKLV(desc *description.Session) (*description.Media, format.Format) {
+	// streams that are always available get their description later
+	if desc == nil {
+		return nil, nil
+	}
+
 	for _, medi := range desc.Medias {
 		for _, forma := range medi.Formats {
 			if _, ok := forma.(*format.KLV); ok {

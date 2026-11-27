@@ -23,7 +23,8 @@ const (
 // Tracker follows the metadata of a stream.
 // Every KLV unit of the stream passes through Process().
 type Tracker struct {
-	repair atomic.Bool
+	repair   atomic.Bool
+	hasTrack atomic.Bool
 
 	mutex          sync.Mutex
 	last           *klv.Telemetry
@@ -177,11 +178,15 @@ func (t *Tracker) update(in *klv.Telemetry, now time.Time) {
 	}
 }
 
-// HasData returns whether metadata has been received.
-func (t *Tracker) HasData() bool {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	return t.last != nil
+// SetHasTrack sets whether the stream has a metadata track.
+func (t *Tracker) SetHasTrack(v bool) {
+	t.hasTrack.Store(v)
+}
+
+// HasTrack returns whether the stream has a metadata track,
+// regardless of whether metadata has been received yet.
+func (t *Tracker) HasTrack() bool {
+	return t.hasTrack.Load()
 }
 
 // Latest returns the last known state, or nil when no metadata has been received.

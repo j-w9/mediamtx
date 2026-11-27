@@ -37,6 +37,10 @@ func (ps Peers) Validate() error {
 		}
 		names[p.Name] = struct{}{}
 
+		if err := checkNotRedacted("pass", p.Pass); err != nil {
+			return fmt.Errorf("peer '%s': %w", p.Name, err)
+		}
+
 		u, err := url.Parse(p.URL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return fmt.Errorf("invalid URL of peer '%s': it must be the address of its API, "+
