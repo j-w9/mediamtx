@@ -1362,7 +1362,7 @@ const roles = {
 function roleOf(u) {
   const a = new Set((u.permissions || []).map((p) => p.action));
   if (a.has('api') && a.has('publish')) return 'Admin';
-  if (a.has('api')) return a.has('read') ? 'Peer' : 'Admin, settings only';
+  if (a.has('api')) return a.has('read') ? 'Peer' : 'Admin';
   if (a.has('publish')) return 'Operator';
   return 'Viewer';
 }
@@ -1370,7 +1370,7 @@ function roleOf(u) {
 function whereOf(u) {
   const ips = u.ips || [];
   if (!ips.length) return 'Anywhere';
-  if (ips.every((ip) => ip.startsWith('127.') || ip === '::1')) return 'This machine';
+  if (ips.every((ip) => ip.startsWith('127.') || ip.split('/')[0] === '::1')) return 'This machine';
   return ips.join(', ');
 }
 
