@@ -87,6 +87,8 @@ func (p *Core) doAPIConfigGlobalPatch(in conf.OptionalGlobal) (*conf.Conf, error
 		return nil, err
 	}
 
+	p.saveConfOverlay(func(o *overlay) { o.recordGlobal(&in) })
+
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil
 }
@@ -98,6 +100,8 @@ func (p *Core) doAPIConfigPathDefaultsPatch(in conf.OptionalPath) (*conf.Conf, e
 	if err != nil {
 		return nil, err
 	}
+
+	p.saveConfOverlay(func(o *overlay) { o.recordPathDefaults(&in) })
 
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil
@@ -111,6 +115,8 @@ func (p *Core) doAPIConfigPathAdd(name string, in conf.OptionalPath) (*conf.Conf
 		return nil, err
 	}
 
+	p.saveConfOverlay(func(o *overlay) { o.recordPathSet(name, &in) })
+
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil
 }
@@ -118,10 +124,15 @@ func (p *Core) doAPIConfigPathAdd(name string, in conf.OptionalPath) (*conf.Conf
 func (p *Core) doAPIConfigPathPatch(name string, in conf.OptionalPath) (*conf.Conf, error) {
 	newConf := p.conf.Clone()
 
+	// record the change before it is merged into the existing path
+	fields := toFields(&in)
+
 	err := newConf.PatchPath(name, &in)
 	if err != nil {
 		return nil, err
 	}
+
+	p.saveConfOverlay(func(o *overlay) { o.recordPathPatch(name, fields) })
 
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil
@@ -135,6 +146,8 @@ func (p *Core) doAPIConfigPathReplace(name string, in conf.OptionalPath) (*conf.
 		return nil, err
 	}
 
+	p.saveConfOverlay(func(o *overlay) { o.recordPathSet(name, &in) })
+
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil
 }
@@ -146,6 +159,8 @@ func (p *Core) doAPIConfigPathDelete(name string) (*conf.Conf, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	p.saveConfOverlay(func(o *overlay) { o.recordPathDelete(name) })
 
 	p.Log(logger.Info, "reloading configuration (API request)")
 	return newConf, nil

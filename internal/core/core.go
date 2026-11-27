@@ -196,6 +196,7 @@ type Core struct {
 	ctx             context.Context
 	ctxCancel       func()
 	confPath        string
+	overlay         *overlay
 	supportsIPv6    bool
 	logger          *logger.Logger
 	externalCmdPool *externalcmd.Pool
@@ -346,6 +347,8 @@ func New(args []string) (*Core, bool) {
 	}
 
 	p.confPath = confPath
+	// apply the changes that were made through the API in previous runs
+	loadedConf = p.loadConfOverlay(loadedConf, tempLogger)
 	p.conf = loadedConf
 	p.internalUserIDs = newInternalUserIDs(len(loadedConf.AuthInternalUsers))
 
@@ -411,6 +414,9 @@ outer:
 				p.Log(logger.Error, "%s", err)
 				break outer
 			}
+
+			// changes made through the API stay in effect
+			newConf = p.overlay.apply(newConf, p.logger)
 
 			err = p.applyConf(newConf)
 			if err != nil {
