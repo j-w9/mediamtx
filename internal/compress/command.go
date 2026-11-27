@@ -130,6 +130,27 @@ func Command(cnf *conf.Path, pathName string) string {
 	return strings.Join(args, " ")
 }
 
+// InputPath returns the name of the path from which a path is made, when the path
+// is a compressed copy. It returns an empty string otherwise.
+func InputPath(pathConfs map[string]*conf.Path, outName string) string {
+	for _, cnf := range pathConfs {
+		if !cnf.Compress ||
+			len(outName) <= len(cnf.CompressPathSuffix) ||
+			!strings.HasSuffix(outName, cnf.CompressPathSuffix) {
+			continue
+		}
+
+		inName := outName[:len(outName)-len(cnf.CompressPathSuffix)]
+
+		inConf, _, err := conf.FindPathConf(pathConfs, inName)
+		if err == nil && inConf == cnf {
+			return inName
+		}
+	}
+
+	return ""
+}
+
 // OnDemandCommand returns the command to run when a path is requested by a reader,
 // in case the path is the output of an on-demand compression.
 // It returns an empty string otherwise.

@@ -177,6 +177,13 @@ func (t *Tracker) update(in *klv.Telemetry, now time.Time) {
 	}
 }
 
+// HasData returns whether metadata has been received.
+func (t *Tracker) HasData() bool {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	return t.last != nil
+}
+
 // Latest returns the last known state, or nil when no metadata has been received.
 func (t *Tracker) Latest() (*klv.Telemetry, time.Time) {
 	t.mutex.Lock()

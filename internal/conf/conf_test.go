@@ -1436,3 +1436,13 @@ func TestConfAddDeprecatedCredentialsTwice(t *testing.T) {
 	require.NoError(t, c3.PatchPath("test", &patch))
 	require.Equal(t, c2, c3)
 }
+
+func TestPeersValidate(t *testing.T) {
+	require.NoError(t, conf.Peers{{Name: "site-2", URL: "http://10.0.0.2:9997"}}.Validate())
+	require.ErrorContains(t, conf.Peers{{Name: "site 2", URL: "http://10.0.0.2:9997"}}.Validate(), "invalid peer name")
+	require.ErrorContains(t, conf.Peers{{Name: "a", URL: "10.0.0.2:9997"}}.Validate(), "invalid URL")
+	require.ErrorContains(t, conf.Peers{
+		{Name: "a", URL: "http://10.0.0.2:9997"},
+		{Name: "a", URL: "http://10.0.0.3:9997"},
+	}.Validate(), "defined twice")
+}

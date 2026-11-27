@@ -18,6 +18,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
 	"github.com/bluenviron/mediamtx/internal/servers/hls"
+	"github.com/bluenviron/mediamtx/internal/telemetry"
 )
 
 func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
@@ -141,6 +142,9 @@ type pathManager struct {
 	chClosePathIfIdle     chan *path
 	chSetPathAvailable    chan *path
 	chSetPathNotAvailable chan *path
+	// metadata trackers of streams, by path name
+	trackers sync.Map
+
 	chFindPathConf        chan defs.PathFindPathConfReq
 	chDescribe            chan defs.PathDescribeReq
 	chAddReader           chan defs.PathAddReaderReq
@@ -570,6 +574,7 @@ func (pm *pathManager) createPath(
 		parent:             pm,
 
 		compressOnDemandCmd: compress.OnDemandCommand(pm.pathConfs, pathConf, name),
+		compressInput:       compress.InputPath(pm.pathConfs, name),
 	}
 	pa.initialize()
 	pm.paths[name] = pa
@@ -581,6 +586,24 @@ func (pm *pathManager) ReloadPathConfs(pathConfs map[string]*conf.Path) {
 	case pm.chReloadConf <- pathConfs:
 	case <-pm.ctx.Done():
 	}
+}
+
+// setTracker is called by path, in order to make the metadata of its stream available to other paths.
+func (pm *pathManager) setTracker(name string, t *telemetry.Tracker) {
+	if t == nil {
+		pm.trackers.Delete(name)
+	} else {
+		pm.trackers.Store(name, t)
+	}
+}
+
+// tracker is called by path. It returns the metadata tracker of the stream of another path.
+func (pm *pathManager) tracker(name string) *telemetry.Tracker {
+	t, ok := pm.trackers.Load(name)
+	if !ok {
+		return nil
+	}
+	return t.(*telemetry.Tracker)
 }
 
 // setPathAvailable is called by path.

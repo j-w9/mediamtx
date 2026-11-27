@@ -551,6 +551,11 @@ components:
         multicastSRTPPort:
           type: integer
           format: int64
+        peers:
+          type: array
+          description: Peers
+          items:
+            $ref: "#/components/schemas/Peer"
         playback:
           type: boolean
           description: Playback

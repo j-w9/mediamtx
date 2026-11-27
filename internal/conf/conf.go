@@ -316,6 +316,9 @@ type Conf struct {
 	PPROFAllowOrigins   *[]string  `json:"pprofAllowOrigins,omitempty" deprecated:"true"`
 	PPROFTrustedProxies IPNetworks `json:"pprofTrustedProxies"`
 
+	// Peers
+	Peers Peers `json:"peers"`
+
 	// Discovery
 	Discovery          bool     `json:"discovery"`
 	DiscoveryMulticast []string `json:"discoveryMulticast"`
@@ -797,9 +800,14 @@ func (conf *Conf) validate(l logger.Writer) error {
 
 	// Playback
 
+	errPeers := conf.Peers.Validate()
+	if errPeers != nil {
+		return errPeers
+	}
+
 	for _, addr := range conf.DiscoveryMulticast {
-		host, _, err := net.SplitHostPort(addr)
-		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsMulticast() {
+		host, _, err2 := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err2 != nil || ip == nil || !ip.IsMulticast() {
 			return fmt.Errorf("invalid discovery multicast address '%s': it must be in the form group:port, "+
 				"for instance 239.1.1.1:5000", addr)
 		}

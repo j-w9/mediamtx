@@ -208,6 +208,26 @@ pprofServerCert: server.crt
 pprofTrustedProxies: []
 
 ###############################################
+# Global settings -> Peers
+
+# Other MediaMTX servers with which video is shared.
+# The streams of each peer are listed by the API (/v3/peers/list) and by the web UI,
+# from which they can be pulled into this server with one click. When a peer compresses
+# a stream (see "compress"), the compressed copy can be pulled instead of the original,
+# in order to save bandwidth. Streams are pulled with SRT when the peer has it enabled,
+# otherwise with RTSP.
+# The API of a peer must be reachable from this server, and the user must be allowed
+# to use the API and to read streams on the peer (see authInternalUsers).
+peers: []
+#  - name: site2
+#    # address of the API of the peer
+#    url: http://192.168.1.10:9997
+#    user: myuser
+#    pass: mypass
+#    # fingerprint of the certificate of the peer, when it uses HTTPS with a self-signed certificate
+#    fingerprint:
+
+###############################################
 # Global settings -> Discovery
 
 # Look for video sources on the networks the server is connected to.

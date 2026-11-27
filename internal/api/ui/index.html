@@ -617,6 +617,40 @@ dialog h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; }
   width: 100%;
 }
 
+.peer {
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+  max-width: 900px;
+}
+
+.peer header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--panel-2);
+}
+
+.peer header .name { font-weight: 600; }
+
+.peer header .sub, .peer .row .sub { color: var(--dim); font-size: 13px; }
+
+.peer header .grow { flex: 1; }
+
+.peer .row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--rail);
+}
+
+.peer .row .acts { display: flex; gap: 6px; }
+
 .settings { max-width: 640px; display: grid; gap: 16px; }
 
 .settings section {
@@ -692,6 +726,7 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
     <button role="tab" data-view="feeds" aria-selected="true">Feeds</button>
     <button role="tab" data-view="wall" aria-selected="false">Wall</button>
     <button role="tab" data-view="map" aria-selected="false">Map</button>
+    <button role="tab" data-view="peers" aria-selected="false">Peers</button>
     <button role="tab" data-view="recordings" aria-selected="false">Recordings</button>
     <button role="tab" data-view="settings" aria-selected="false">Settings</button>
   </div>
@@ -744,6 +779,7 @@ const state = {
   recPlaying: null,
   connected: false,
   found: { enabled: false, items: [] }, // video sources found on the network
+  peers: [],          // other servers, and the feeds they offer
   models: null,       // detection models available on the server
   classFilter: '',    // show only feeds where this class was detected
   sends: null,        // status of the destinations of the selected feed
@@ -998,6 +1034,72 @@ function openFound() {
   document.getElementById('found-dialog').showModal();
 }
 
+// ---------- peers ----------
+
+async function refreshPeers() {
+  try {
+    state.peers = (await api('GET', '/peers/list')).items;
+  } catch (e) {
+    state.peers = [];
+  }
+}
+
+function pullFeed(peer, feed, compressed) {
+  return act('Pulling', async () => {
+    await api('POST', '/config/paths/add/' + encodeName(peer.name + '/' + feed.name),
+      { source: compressed ? feed.sourceCompressed : feed.source });
+    await refreshConfig();
+    await refreshPaths();
+    await refreshPeers();
+  });
+}
+
+function renderPeers() {
+  const main = document.getElementById('main');
+
+  if (!state.peers.length) {
+    main.replaceChildren(el('div', { class: 'empty' },
+      el('h2', {}, 'No peers'),
+      el('button', { class: 'btn primary', onclick: () => document.querySelector('.tabs button[data-view="settings"]').click() }, 'Add peer')));
+    return;
+  }
+
+  main.replaceChildren(...state.peers.map((peer) => el('div', { class: 'peer' },
+    el('header', {},
+      el('span', { class: 'tally' + (peer.reachable ? ' on' : ' rec') }),
+      el('span', { class: 'name' }, peer.name),
+      el('span', { class: 'sub grow' }, peer.reachable ? Math.round(peer.latencyMs) + ' ms' : (peer.error || 'Unreachable')),
+      el('span', { class: 'sub' }, peer.version || '')),
+    peer.feeds.map((feed) => el('div', { class: 'row' },
+      el('span', { class: 'tally' + (feed.available ? ' on' : '') }),
+      el('div', { style: 'min-width:0' },
+        el('div', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, feed.name),
+        el('div', { class: 'sub' }, feed.tracks.join(', ') || 'Offline')),
+      el('div', { class: 'acts' }, feed.pulledBy
+        ? [
+          el('button', {
+            class: 'btn',
+            onclick: () => {
+              state.selected = feed.pulledBy;
+              document.querySelector('.tabs button[data-view="feeds"]').click();
+            },
+          }, 'Open'),
+          el('button', {
+            class: 'btn danger',
+            onclick: () => act('Stopped', async () => {
+              await api('DELETE', '/config/paths/delete/' + encodeName(feed.pulledBy));
+              await refreshConfig();
+              await refreshPaths();
+              await refreshPeers();
+            }),
+          }, 'Stop'),
+        ]
+        : [
+          feed.source ? el('button', { class: 'btn primary', onclick: () => pullFeed(peer, feed, false) }, 'Pull') : null,
+          feed.sourceCompressed ? el('button', { class: 'btn', onclick: () => pullFeed(peer, feed, true) }, 'Pull compressed') : null,
+        ]))))));
+}
+
 // ---------- settings ----------
 
 function renderSettings() {
@@ -1028,7 +1130,29 @@ function renderSettings() {
       sw('On', !!g.tak, (e) => save(e.target.checked ? 'TAK on' : 'TAK off', { tak: e.target.checked })),
       field('Send to', takTo),
       field('Video host', takHost),
-      el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { takAddresses: lines(takTo.value), takVideoHost: takHost.value.trim() }) }, 'Save')))));
+      el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { takAddresses: lines(takTo.value), takVideoHost: takHost.value.trim() }) }, 'Save'))),
+    renderPeerSettings(g, save)));
+}
+
+function renderPeerSettings(g, save) {
+  const peers = g.peers || [];
+  const text = (ph, type) => el('input', { type: type || 'text', placeholder: ph, spellcheck: 'false', autocomplete: 'off' });
+  const name = text('site2');
+  const url = text('http://192.168.1.10:9997');
+  const user = text('');
+  const pass = text('', 'password');
+  const done = async () => { await refreshPeers(); };
+
+  return el('section', {},
+    el('h2', {}, 'Peers'),
+    el('ul', { class: 'rows', style: 'margin-bottom:12px' }, peers.map((p, i) => el('li', {},
+      el('span', { class: 'grow' }, p.name + '  ' + p.url),
+      el('button', { class: 'btn danger', onclick: () => save('Removed', { peers: peers.filter((_, j) => j !== i) }).then(done) }, 'Remove')))),
+    field('Name', name), field('API address', url), field('User', user), field('Password', pass),
+    el('div', { class: 'actions' }, el('button', {
+      class: 'btn primary',
+      onclick: () => save('Added', { peers: peers.concat([{ name: name.value.trim(), url: url.value.trim(), user: user.value, pass: pass.value }]) }).then(done),
+    }, 'Add peer')));
 }
 
 // ---------- map ----------
@@ -1698,9 +1822,12 @@ async function poll(force) {
       state.info = await api('GET', '/info');
       await refreshConfig();
       await refreshFound();
+      await refreshPeers();
       if (state.view === 'recordings') await refreshRecordings();
     } else if (document.getElementById('found-dialog').open) {
       await refreshFound();
+    } else if (state.view === 'peers' && tick % 2 === 0) {
+      await refreshPeers();
     }
     await refreshPaths();
     if (state.view === 'feeds' && state.selected) await refreshSends();
@@ -1721,6 +1848,7 @@ async function poll(force) {
     updateFeeds();
   } else if (state.view === 'wall') renderWall(false);
   else if (state.view === 'map') renderMapView();
+  else if (state.view === 'peers') renderPeers();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -2082,14 +2210,20 @@ function updateSends() {
 }
 
 function renderSendSection(name, c) {
-  const kind = el('select', {}, sendKinds.map(([v, t]) => el('option', { value: v }, t)));
+  const peerTargets = state.peers.filter((p) => p.pushBase);
+  const kind = el('select', {},
+    sendKinds.map(([v, t]) => el('option', { value: v }, t)),
+    peerTargets.map((p) => el('option', { value: 'peer:' + p.name }, p.name)));
   const address = el('input', { type: 'text', placeholder: sendKinds[0][2] + name, autocomplete: 'off', spellcheck: 'false' });
   const version = el('select', {},
     el('option', { value: 'original' }, 'Original'),
     el('option', { value: 'compressed' }, 'Compressed (' + describeCompression(c) + ')'));
 
   kind.addEventListener('change', () => {
+    const peer = peerTargets.find((p) => 'peer:' + p.name === kind.value);
+    if (peer) { address.value = peer.pushBase + name; return; }
     const k = sendKinds.find((x) => x[0] === kind.value);
+    address.value = '';
     address.placeholder = k[2] + (k[0] === 'rtmp' ? '' : name);
   });
 
@@ -2432,7 +2566,7 @@ function writeHash() {
 }
 
 function readHash() {
-  const m = /^#(feeds|wall|map|recordings|settings)(?:\/(.+))?$/.exec(location.hash);
+  const m = /^#(feeds|wall|map|peers|recordings|settings)(?:\/(.+))?$/.exec(location.hash);
   if (!m) return;
   const name = m[2] ? decodeURIComponent(m[2]) : null;
   state.view = m[1];
@@ -2449,6 +2583,7 @@ function render() {
   else if (state.view === 'wall') renderWall(true);
   else if (state.view === 'map') renderMapView();
   else if (state.view === 'settings') renderSettings();
+  else if (state.view === 'peers') renderPeers();
   else renderRecordings();
 }
 

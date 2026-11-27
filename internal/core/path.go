@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +43,8 @@ type pathParent interface {
 	closePathIfIdle(*path)
 	removePath(*path)
 	AddReader(req defs.PathAddReaderReq) (*defs.PathAddReaderRes, error)
+	setTracker(name string, t *telemetry.Tracker)
+	tracker(name string) *telemetry.Tracker
 }
 
 type pathOnDemandState int
@@ -137,20 +140,25 @@ type path struct {
 	available bool
 	confName  string
 
-	ctx                            context.Context
-	ctxCancel                      func()
-	pendingRequests                atomic.Int64
-	confMutex                      sync.RWMutex
-	source                         defs.Source
-	stream                         *stream.Stream
-	recorder                       *recorder.Recorder
-	forwardManager                 *forward.Manager
-	availableTime                  time.Time
-	onlineTime                     time.Time
-	onUnDemandHook                 func(string)
-	onUnavailableHook              func()
-	compressCmd                    *externalcmd.Cmd
-	compressOnDemandCmd            string
+	ctx                 context.Context
+	ctxCancel           func()
+	pendingRequests     atomic.Int64
+	confMutex           sync.RWMutex
+	source              defs.Source
+	stream              *stream.Stream
+	recorder            *recorder.Recorder
+	forwardManager      *forward.Manager
+	availableTime       time.Time
+	onlineTime          time.Time
+	onUnDemandHook      func(string)
+	onUnavailableHook   func()
+	compressCmd         *externalcmd.Cmd
+	compressOnDemandCmd string
+	// name of the path this one is a compressed copy of, if any
+	compressInput string
+	// metadata track added to a compressed copy, and the routine that fills it
+	klvBridgeMedia                 *description.Media
+	klvBridge                      *klvBridge
 	detectWorker                   *detect.Worker
 	telemetry                      *telemetry.Tracker
 	internalReaders                map[defs.Reader]struct{}
@@ -692,6 +700,18 @@ func (pa *path) doAddPublisher(req defs.PathAddPublisherReq) {
 	req.Author.Log(logger.Info, "is publishing to path '%s'",
 		pa.name)
 
+	if pa.klvBridgeMedia != nil {
+		pa.Log(logger.Info, "copying metadata from path '%s'", pa.compressInput)
+		pa.klvBridge = &klvBridge{
+			baseName: pa.compressInput,
+			out:      subStream,
+			outMedia: pa.klvBridgeMedia,
+			parent:   pa.parent,
+			logger:   pa,
+		}
+		pa.klvBridge.start()
+	}
+
 	if pa.conf.AlwaysAvailable {
 		pa.setOnline(req.Author.APISourceDescribe(), req.AccessRequest.Query)
 	}
@@ -1105,10 +1125,25 @@ func (pa *path) setAvailable(
 		Parent:                pa,
 	}
 
+	// A compressed copy is made by an encoder that drops metadata. When the original stream
+	// carries metadata, a track is added to the copy, and it is filled by reading the original.
+	pa.klvBridgeMedia = nil
+	if pa.compressInput != "" && !pa.conf.AlwaysAvailable {
+		if t := pa.parent.tracker(pa.compressInput); t != nil && t.HasData() {
+			if medi, _ := findKLV(desc); medi == nil {
+				pa.klvBridgeMedia = newKLVMedia()
+				extended := *desc
+				extended.Medias = append(slices.Clone(desc.Medias), pa.klvBridgeMedia)
+				strm.OrigDesc = &extended
+			}
+		}
+	}
+
 	// metadata of the stream is followed, and repaired if requested
 	pa.telemetry = &telemetry.Tracker{}
 	pa.telemetry.SetRepair(pa.conf.KLVRepair)
 	strm.KLVProcessor = pa.telemetry.Process
+	pa.parent.setTracker(pa.name, pa.telemetry)
 
 	err := strm.Initialize()
 	if err != nil {
@@ -1183,6 +1218,12 @@ func (pa *path) setNotAvailable() {
 
 	pa.stopCompressing()
 	pa.stopDetecting()
+
+	if pa.klvBridge != nil {
+		pa.klvBridge.stop()
+		pa.klvBridge = nil
+	}
+	pa.parent.setTracker(pa.name, nil)
 
 	if pa.recorder != nil {
 		pa.recorder.Close()
