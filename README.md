@@ -2,46 +2,94 @@
   <a href="https://mediamtx.org">
     <img src="logo.png" alt="MediaMTX">
   </a>
-
-  <br>
-  <br>
-
-[![Website](https://img.shields.io/badge/website-mediamtx.org-1c94b5)](https://mediamtx.org)
-[![Test](https://github.com/bluenviron/mediamtx/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/bluenviron/mediamtx/actions/workflows/test.yml?query=branch%3Amain)
-[![Lint](https://github.com/bluenviron/mediamtx/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bluenviron/mediamtx/actions/workflows/lint.yml?query=branch%3Amain)
-[![CodeCov](https://codecov.io/gh/bluenviron/mediamtx/branch/main/graph/badge.svg)](https://app.codecov.io/gh/bluenviron/mediamtx/tree/main)
-[![Release](https://img.shields.io/github/v/release/bluenviron/mediamtx)](https://github.com/bluenviron/mediamtx/releases)
-[![Docker Hub](https://img.shields.io/badge/docker-bluenviron/mediamtx-blue)](https://hub.docker.com/r/bluenviron/mediamtx)
-
 </h1>
 
 <br>
 
-_MediaMTX_ is a ready-to-use and zero-dependency live media server and media proxy that allows to publish, read, proxy, record and playback real-time video and audio streams. It has been conceived as a "media router" that routes media streams from one end to the other, with a focus on efficiency and portability.
+This is a fork of [MediaMTX](https://github.com/bluenviron/mediamtx), the live media server and media proxy that allows to publish, read, proxy, record and playback real-time video and audio streams. Everything _MediaMTX_ does is still here and is described in the [upstream documentation](https://mediamtx.org/docs/kickoff/introduction).
 
-<div align="center">
+The fork adds what is needed to distribute video from drones, aircraft sensors and cameras over constrained networks: a web UI, compression, metadata handling, delivery to TAK, discovery of sources, sharing between servers and object detection. The additions live in the `custom` branch.
 
-| [Install](https://mediamtx.org/docs/kickoff/install) | [Documentation](https://mediamtx.org/docs/kickoff/introduction) |
-| ---------------------------------------------------- | --------------------------------------------------------------- |
+<h3>What the fork adds</h3>
 
-</div>
+- **Web UI**, served by the Control API at `/ui/`: live feeds with bitrate, a video wall, a map, recordings, peers and settings. Changes made in the UI are saved in a file next to the configuration file (`mediamtx.api.json`) and survive restarts; the configuration file itself is never modified.
+- **Compression**: a stream is re-encoded with _FFmpeg_ into a second path (`<name>_compressed`) in H264, H265 or AV1, by default only while someone is reading it. The original stays available.
+- **KLV metadata** (MISB ST 0601): streams that carry it are decoded automatically. The position of the sensor, of the area it is looking at and its footprint are shown on the map and returned by the API. Metadata can be repaired before being forwarded (checksum, item order, timestamp, version), and is carried into compressed copies.
+- **TAK**: streams that have a position are announced to ATAK, WinTAK and iTAK clients and to TAK servers with Cursor-on-Target messages, over UDP, TCP or TLS. Cameras without metadata can be given a fixed position.
+- **Discovery** of video sources: streams announced with SAP, MPEG-TS streams on multicast groups, ONVIF cameras, streams announced by TAK. Sources are listed, and added with one click.
+- **Peers**: a server lists the streams of other servers and pulls them, with SRT when available. In automatic mode it pulls the original and switches to the compressed copy when the link loses packets.
+- **Restreaming** from the UI, built on the upstream forward feature.
+- **Object detection** with YOLO-family models in ONNX format, run on the machine (CPU or GPU) or on an inference server that speaks the KServe v2 protocol. Results are shown over the video and can be used to filter feeds.
+- **Users** can be managed from the UI.
 
-<h3>Features</h3>
+<h3>Requirements</h3>
 
-- [Publish streams](https://mediamtx.org/docs/features/publish-and-read) to the server with Media-over-QUIC, SRT, WebRTC, RTSP, RTMP, HLS, MPEG-TS, RTP, using FFmpeg, GStreamer, OBS Studio, Python , Golang, Unity, Web browsers, Raspberry Pi Cameras and more.
-- [Read streams](https://mediamtx.org/docs/features/publish-and-read) from the server with Media-over-QUIC, SRT, WebRTC, RTSP, RTMP, HLS, using FFmpeg, GStreamer, VLC, OBS Studio, Python , Golang, Unity, Web browsers and more.
-- Streams are automatically converted from a protocol to another
-- Serve several streams at once in separate paths
-- Reload the configuration without disconnecting existing clients (hot reloading)
-- [Serve always-available streams](https://mediamtx.org/docs/features/always-available) even when the publisher is offline
-- [Record streams](https://mediamtx.org/docs/features/record) to disk in fMP4 or MPEG-TS format
-- [Playback recorded streams](https://mediamtx.org/docs/features/playback) from disk
-- [Authenticate](https://mediamtx.org/docs/features/authentication) users with internal, HTTP or JWT authentication
-- [Forward streams](https://mediamtx.org/docs/features/forward) to other servers
-- [Proxy requests](https://mediamtx.org/docs/features/proxy) to other servers
-- [Control](https://mediamtx.org/docs/features/control-api) the server through the Control API
-- [Extract metrics](https://mediamtx.org/docs/features/metrics) from the server in a Prometheus-compatible format
-- [Monitor performance](https://mediamtx.org/docs/features/monitor-performance) to investigate CPU and RAM consumption
-- [Run hooks](https://mediamtx.org/docs/features/hooks) (external commands) when clients connect, disconnect, read or publish streams
-- Compatible with Linux, Windows and macOS, does not require any dependency or interpreter, it's a single executable
-- ...and many [others](https://mediamtx.org/docs/kickoff/introduction).
+The server is still a single executable. Some of the additions need other software on the machine, only when they are used:
+
+| Feature                          | Needs                                                                |
+| -------------------------------- | -------------------------------------------------------------------- |
+| Compression                      | _FFmpeg_ with `libx264`, `libx265` or `libsvtav1`                    |
+| Object detection                 | _FFmpeg_, Python 3 with `numpy`                                      |
+| Object detection on this machine | the `onnxruntime` Python package (`onnxruntime-gpu` for NVIDIA GPUs) |
+| Compression, detection, TAK      | the RTSP server enabled (it is by default)                           |
+
+<h3>Build and run</h3>
+
+Go 1.27 or later is required.
+
+```sh
+go generate ./...
+go build .
+MTX_API=yes ./mediamtx
+```
+
+Then open http://localhost:9997/ui/. By default the Control API, and therefore the UI, is reachable from the machine itself only; see [Authentication](https://mediamtx.org/docs/features/authentication) and the Users section of the UI to open it to others.
+
+<h3>Configuration</h3>
+
+Every addition is configured in `mediamtx.yml`, where each setting is documented, or from the UI. For instance:
+
+```yml
+api: yes
+
+# announce streams to TAK clients on the local network
+tak: yes
+
+# look for video sources, including MPEG-TS sent to this multicast group
+discovery: yes
+discoveryMulticast: [239.1.1.1:5000]
+
+# another server to share video with
+peers:
+  - name: site2
+    url: http://192.168.1.10:9997
+    user: link
+    pass: secret
+
+paths:
+  uav1:
+    source: udp+mpegts://239.1.1.1:5000
+    compress: yes
+    compressVideoCodec: h265
+    compressVideoBitrate: 800k
+    klvRepair: yes
+    detect: yes
+    detectModel: yolov8n.onnx
+  all_others:
+```
+
+Detection models are `.onnx` files placed in the `models` directory. The interpreter used to run them is set with `detectPython`.
+
+The API endpoints added by the fork are `/v3/discovery/list`, `/v3/peers/list`, `/v3/peers/pull` and `/v3/detect/models/list`. Paths returned by `/v3/paths/list` have two more fields, `telemetry` and `detection`.
+
+<h3>What has and has not been tested</h3>
+
+Tested: compression in the three codecs, KLV decoding against a public sample clip, KLV repair end to end, TAK messages against the [goatak](https://github.com/kdudkov/goatak) server and against the attribute names used by the ATAK source code, TAK over multicast and over TLS with certificates, discovery of SAP, multicast and TAK sources and of a simulated ONVIF camera, sharing and automatic switching between two servers with packet loss on the link, detection with YOLOX, YOLOv5, YOLOv8 and YOLO11 models on CPU and on Apple GPUs, and against NVIDIA Triton and MLServer.
+
+Not tested: a real ATAK, WinTAK or iTAK client opening the video, a real ONVIF camera, detection on NVIDIA GPUs.
+
+Known limits: changes to users made through the API are saved, but edits to the same users in the configuration file are then overridden until `mediamtx.api.json` is deleted; a peer must give this server a user that can use its API and read its streams; the UI has not been checked on screens narrower than 500 pixels.
+
+<h3>Upstream</h3>
+
+Features, documentation and releases of _MediaMTX_ are at [mediamtx.org](https://mediamtx.org) and [bluenviron/mediamtx](https://github.com/bluenviron/mediamtx). The upstream license applies.
