@@ -24,7 +24,10 @@ func TestModelArgs(t *testing.T) {
 		}))
 
 	require.Equal(t,
-		[]string{"--type", "v8", "--server", "http://triton:8000", "--model", "yolo"},
+		[]string{
+			"--type", "v8", "--server", "http://triton:8000", "--model", "yolo",
+			"--names", filepath.Join("models", "yolo.names"),
+		},
 		modelArgs(&conf.Path{
 			DetectModel:     "yolo",
 			DetectServer:    "http://triton:8000",

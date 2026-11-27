@@ -639,7 +639,8 @@ pathDefaults:
   # When detectServer is empty, this is the name of a .onnx file inside detectModelsDir.
   # Otherwise, this is the name of a model hosted by the server.
   # Class names are read from the model. If the model does not contain them, they are read
-  # from a text file with the same name of the model and the .names extension, one name per line.
+  # from a text file inside detectModelsDir, one name per line, whose name is the name
+  # of the model with the .names extension (yolo.onnx -> yolo.names).
   detectModel:
   # URL of an inference server that speaks the KServe v2 protocol
   # (NVIDIA Triton, OpenVINO Model Server, ...), for instance http://192.168.1.10:8000

@@ -54,7 +54,11 @@ func modelArgs(cnf *conf.Path) []string {
 	args := []string{"--type", cnf.DetectModelType}
 
 	if cnf.DetectServer != "" {
-		return append(args, "--server", cnf.DetectServer, "--model", cnf.DetectModel)
+		return append(args,
+			"--server", cnf.DetectServer,
+			"--model", cnf.DetectModel,
+			// class names of models on a server can be provided by a local file
+			"--names", filepath.Join(cnf.DetectModelsDir, filepath.FromSlash(cnf.DetectModel)+".names"))
 	}
 
 	return append(args,

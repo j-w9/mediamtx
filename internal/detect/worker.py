@@ -256,9 +256,11 @@ class LocalModel:
 class RemoteModel:
     """A model hosted by a server that speaks the KServe v2 inference protocol."""
 
-    def __init__(self, server, name):
+    def __init__(self, server, name, names_file=""):
         self.base = server.rstrip("/") + "/v2/models/" + urllib.request.quote(name, safe="")
         self.device = "remote"
+        # tensors are sent in binary form, which is compact, as long as the server accepts it
+        self.binary = True
 
         meta = self._get_json(self.base)
         inp = meta["inputs"][0]
@@ -279,16 +281,24 @@ class RemoteModel:
             oshape = [1] + oshape
         self.output_shape = [d if d > 0 else "n" for d in oshape]
 
-        # class names are not part of the protocol. Triton exposes them through
-        # the model configuration, when the model has a label file.
+        # class names are not part of the protocol. They are searched in the parameters
+        # of the model metadata, in the model configuration of Triton,
+        # and in a text file stored on this machine.
         self.names = None
-        try:
-            config = self._get_json(self.base + "/config")
-            params = config.get("parameters", {})
-            if "names" in params:
-                self.names = parse_names(params["names"].get("string_value"))
-        except (urllib.error.URLError, ValueError, KeyError):
-            pass
+        params = meta.get("parameters") or {}
+        if isinstance(params.get("names"), str):
+            self.names = parse_names(params["names"])
+        if not self.names:
+            try:
+                config = self._get_json(self.base + "/config")
+                params = config.get("parameters", {})
+                if "names" in params:
+                    self.names = parse_names(params["names"].get("string_value"))
+            except (urllib.error.URLError, ValueError, KeyError, AttributeError):
+                pass
+        if not self.names and names_file and os.path.isfile(names_file):
+            with open(names_file, encoding="utf-8") as f:
+                self.names = [line.strip() for line in f if line.strip()]
 
     @staticmethod
     def _get_json(url):
@@ -296,6 +306,37 @@ class RemoteModel:
             return json.loads(res.read().decode("utf-8"))
 
     def infer(self, tensor):
+        if self.binary:
+            try:
+                return self._infer_binary(tensor)
+            except urllib.error.HTTPError as e:
+                # the binary extension is optional: servers that do not implement it
+                # (i.e. MLServer) reject the request, and get plain JSON from now on.
+                log("the server refused binary tensors (status %d), switching to JSON" % e.code)
+                self.binary = False
+        return self._infer_json(tensor)
+
+    def _infer_json(self, tensor):
+        body = json.dumps({
+            "inputs": [{
+                "name": self.input_name,
+                "shape": list(tensor.shape),
+                "datatype": "FP32",
+                # 4 decimals are more than enough for pixels and keep the request small
+                "data": np.round(tensor.astype(np.float32), 4).ravel().tolist(),
+            }],
+            "outputs": [{"name": self.output_name}],
+        }).encode("utf-8")
+
+        req = urllib.request.Request(self.base + "/infer", data=body, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as res:
+            doc = json.loads(res.read().decode("utf-8"))
+
+        out = doc["outputs"][0]
+        return np.array(out["data"], dtype=np.float32).reshape(out["shape"])
+
+    def _infer_binary(self, tensor):
         dtype = np.float16 if self.input_datatype == "FP16" else np.float32
         data = np.ascontiguousarray(tensor.astype(dtype)).tobytes()
         header = json.dumps({
@@ -330,7 +371,7 @@ class RemoteModel:
 
 def load_model(args):
     if args.server:
-        return RemoteModel(args.server, args.model)
+        return RemoteModel(args.server, args.model, args.names)
     if not os.path.isfile(args.model):
         raise RuntimeError("model file not found: " + args.model)
     return LocalModel(args.model, args.device)
@@ -446,6 +487,7 @@ def main():
     parser = argparse.ArgumentParser(description="MediaMTX object detection worker")
     parser.add_argument("--model", required=True, help="ONNX file, or name of the model on the server")
     parser.add_argument("--server", default="", help="URL of a KServe v2 inference server")
+    parser.add_argument("--names", default="", help="text file with the class names of a model on a server")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "gpu"])
     parser.add_argument("--type", default="auto", choices=["auto", "v8", "v5", "yolox"])
     parser.add_argument("--source", default="", help="stream to analyze")
