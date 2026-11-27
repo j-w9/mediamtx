@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/auth"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/confwatcher"
+	"github.com/bluenviron/mediamtx/internal/discovery"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
@@ -206,18 +208,21 @@ type Core struct {
 	pprof           *pprof.PPROF
 	recordCleaner   *recordcleaner.Cleaner
 	takPublisher    *tak.Publisher
-	playbackServer  *playback.Server
-	pathManager     *pathManager
-	rtspServer      *rtsp.Server
-	rtspsServer     *rtsp.Server
-	rtmpServer      *rtmp.Server
-	rtmpsServer     *rtmp.Server
-	hlsServer       *hls.Server
-	webRTCServer    *webrtc.Server
-	srtServer       *srt.Server
-	moqServer       *moq.Server
-	api             *api.API
-	confWatcher     *confwatcher.ConfWatcher
+	discoveryFinder *discovery.Finder
+	// read by the API, from other goroutines
+	discoveryFinderAPI atomic.Pointer[discovery.Finder]
+	playbackServer     *playback.Server
+	pathManager        *pathManager
+	rtspServer         *rtsp.Server
+	rtspsServer        *rtsp.Server
+	rtmpServer         *rtmp.Server
+	rtmpsServer        *rtmp.Server
+	hlsServer          *hls.Server
+	webRTCServer       *webrtc.Server
+	srtServer          *srt.Server
+	moqServer          *moq.Server
+	api                *api.API
+	confWatcher        *confwatcher.ConfWatcher
 
 	confMutex       sync.RWMutex
 	conf            *conf.Conf
@@ -1046,6 +1051,17 @@ func (p *Core) createResources(initial bool) error {
 		p.api = i
 	}
 
+	if p.conf.Discovery && p.discoveryFinder == nil {
+		host, _ := os.Hostname()
+		p.discoveryFinder = &discovery.Finder{
+			Multicast:    p.conf.DiscoveryMulticast,
+			OwnTAKPrefix: "MediaMTX-" + host + "-",
+			Parent:       p,
+		}
+		p.discoveryFinder.Initialize()
+		p.discoveryFinderAPI.Store(p.discoveryFinder)
+	}
+
 	if p.conf.TAK && p.takPublisher == nil {
 		i := &tak.Publisher{
 			Addresses:         p.conf.TAKAddresses,
@@ -1368,6 +1384,16 @@ func (p *Core) closeResources(newConf *conf.Conf) error {
 	if newConf == nil && p.confWatcher != nil {
 		p.confWatcher.Close()
 		p.confWatcher = nil
+	}
+
+	closeDiscovery := newConf == nil ||
+		newConf.Discovery != p.conf.Discovery ||
+		!slices.Equal(newConf.DiscoveryMulticast, p.conf.DiscoveryMulticast)
+
+	if closeDiscovery && p.discoveryFinder != nil {
+		p.discoveryFinderAPI.Store(nil)
+		p.discoveryFinder.Close()
+		p.discoveryFinder = nil
 	}
 
 	closeTAKPublisher := newConf == nil ||

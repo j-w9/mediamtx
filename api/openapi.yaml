@@ -407,6 +407,13 @@ components:
           deprecated: true
           items:
             $ref: "#/components/schemas/RTSPAuthMethod"
+        discovery:
+          type: boolean
+          description: Discovery
+        discoveryMulticast:
+          type: array
+          items:
+            type: string
         dumpPackets:
           type: boolean
         encryption:

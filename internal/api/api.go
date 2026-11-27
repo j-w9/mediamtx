@@ -59,6 +59,7 @@ type apiParent interface {
 	logger.Writer
 	OnFatalError(context.Context, error)
 	APIConfigSnapshot() *conf.Conf
+	APIDiscoveryList() *defs.APIDiscoveredSourceList
 	APIConfigGlobalPatch(context.Context, conf.OptionalGlobal) error
 	APIConfigPathDefaultsPatch(context.Context, conf.OptionalPath) error
 	APIConfigPathsAdd(context.Context, string, conf.OptionalPath) error
@@ -262,6 +263,7 @@ func (a *API) Initialize() error {
 	}
 
 	group.GET("/detect/models/list", a.onDetectModelsList)
+	group.GET("/discovery/list", a.onDiscoveryList)
 
 	group.GET("/recordings/list", a.onRecordingsList)
 	group.GET("/recordings/get/*name", a.onRecordingsGet)

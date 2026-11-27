@@ -70,6 +70,10 @@ func (p *testParent) OnFatalError(context.Context, error) {
 
 func (p *testParent) APIConfigSnapshot() *conf.Conf { return p.conf }
 
+func (p *testParent) APIDiscoveryList() *defs.APIDiscoveredSourceList {
+	return &defs.APIDiscoveredSourceList{}
+}
+
 func (p *testParent) APIConfigGlobalPatch(_ context.Context, in conf.OptionalGlobal) error {
 	newConf := p.conf.Clone()
 

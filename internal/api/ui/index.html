@@ -596,6 +596,52 @@ dialog::backdrop { background: rgba(8, 12, 17, 0.7); }
 
 dialog h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; }
 
+#found-dialog { width: min(680px, calc(100vw - 32px)); }
+
+.found {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 170px) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rail);
+}
+
+.found .sub { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.found input {
+  background: var(--bay);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.settings { max-width: 640px; display: grid; gap: 16px; }
+
+.settings section {
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.settings h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+
+.settings .field { grid-template-columns: 130px 1fr; }
+
+.settings textarea {
+  width: 100%;
+  min-height: 64px;
+  background: var(--bay);
+  border: 1px solid var(--rail);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
 dialog label.block { display: block; color: var(--dim); font-size: 14px; margin: 12px 0 4px; }
 
 #toast {
@@ -647,6 +693,7 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
     <button role="tab" data-view="wall" aria-selected="false">Wall</button>
     <button role="tab" data-view="map" aria-selected="false">Map</button>
     <button role="tab" data-view="recordings" aria-selected="false">Recordings</button>
+    <button role="tab" data-view="settings" aria-selected="false">Settings</button>
   </div>
   <div class="server" id="server"></div>
 </div>
@@ -665,6 +712,12 @@ dialog label.block { display: block; color: var(--dim); font-size: 14px; margin:
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="found-dialog">
+  <h2>Found on the network</h2>
+  <div id="found-list"></div>
+  <div class="actions"><button class="btn" id="found-close">Close</button></div>
 </dialog>
 
 <div id="toast" hidden role="status"></div>
@@ -690,6 +743,7 @@ const state = {
   recSegments: [],
   recPlaying: null,
   connected: false,
+  found: { enabled: false, items: [] }, // video sources found on the network
   models: null,       // detection models available on the server
   classFilter: '',    // show only feeds where this class was detected
   sends: null,        // status of the destinations of the selected feed
@@ -883,6 +937,98 @@ let fieldSeq = 0;
 function field(label, input, cls) {
   if (!input.id) input.id = 'f' + (++fieldSeq);
   return el('div', { class: 'field' + (cls ? ' ' + cls : '') }, el('label', { for: input.id }, label), input);
+}
+
+// ---------- sources found on the network ----------
+
+async function refreshFound() {
+  try {
+    state.found = await api('GET', '/discovery/list');
+  } catch (e) {
+    state.found = { enabled: false, items: [] };
+  }
+}
+
+const foundMethods = { sap: 'Announced', multicast: 'Multicast', onvif: 'Camera', tak: 'TAK' };
+
+function suggestName(src) {
+  const base = (src.name || src.address || 'feed').toLowerCase().replace(/^[a-z+]+:\/\//, '');
+  let name = base.replace(/[^0-9a-z_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'feed';
+  const taken = new Set(state.confs.map((c) => c.name));
+  for (let i = 2; taken.has(name); i++) name = name.replace(/-\d+$/, '') + '-' + i;
+  return name;
+}
+
+function renderFound() {
+  const list = document.getElementById('found-list');
+  const items = state.found.items.filter((x) => !x.added);
+  if (!items.length) {
+    list.replaceChildren(el('p', { class: 'hint' }, 'Nothing new'));
+    return;
+  }
+  // rows being edited are kept, so that typing a name is not interrupted
+  const existing = new Map([...list.querySelectorAll('.found')].map((r) => [r.getAttribute('data-id'), r]));
+  list.replaceChildren(...items.map((src) => {
+    if (existing.has(src.id)) return existing.get(src.id);
+    const name = el('input', { type: 'text', value: suggestName(src), 'aria-label': 'Name', pattern: '[0-9a-zA-Z_\\-/\\.]+' });
+    const address = el('input', { type: 'text', value: src.source, 'aria-label': 'Address', spellcheck: 'false' });
+    return el('div', { class: 'found', 'data-id': src.id },
+      el('div', { style: 'min-width:0' },
+        el('div', { class: 'sub', style: 'margin-bottom:4px' }, [...new Set([foundMethods[src.method] || src.method, src.name, src.info].filter(Boolean))].join(', ')),
+        address),
+      name,
+      el('button', {
+        class: 'btn primary',
+        onclick: () => act('Added', async () => {
+          await api('POST', '/config/paths/add/' + encodeName(name.value.trim()),
+            Object.assign({ source: address.value.trim() }, src.conf || {}));
+          await refreshConfig();
+          await refreshPaths();
+          await refreshFound();
+          renderFound();
+        }),
+      }, 'Add'));
+  }));
+}
+
+document.getElementById('found-close').addEventListener('click', () => document.getElementById('found-dialog').close());
+
+function openFound() {
+  renderFound();
+  document.getElementById('found-dialog').showModal();
+}
+
+// ---------- settings ----------
+
+function renderSettings() {
+  const main = document.getElementById('main');
+  const g = state.global || {};
+
+  const sw = (label, checked, onchange) => el('label', { class: 'switch' },
+    el('input', { type: 'checkbox', checked, onchange }), label);
+  const save = (label, changes) => act(label, async () => {
+    await api('PATCH', '/config/global/patch', changes);
+    await refreshConfig();
+    await refreshFound();
+  });
+  const lines = (v) => v.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+
+  const groups = el('textarea', { spellcheck: 'false', placeholder: '239.1.1.1:5000' }, (g.discoveryMulticast || []).join('\n'));
+  const takTo = el('textarea', { spellcheck: 'false', placeholder: 'udp://239.2.3.1:6969' }, (g.takAddresses || []).join('\n'));
+  const takHost = el('input', { type: 'text', value: g.takVideoHost || '', placeholder: 'automatic', spellcheck: 'false' });
+
+  main.replaceChildren(el('div', { class: 'settings' },
+    el('section', {},
+      el('h2', {}, 'Discovery'),
+      sw('Look for video sources', !!g.discovery, (e) => save(e.target.checked ? 'Discovery on' : 'Discovery off', { discovery: e.target.checked })),
+      field('Multicast groups', groups),
+      el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { discoveryMulticast: lines(groups.value) }) }, 'Save'))),
+    el('section', {},
+      el('h2', {}, 'TAK'),
+      sw('Announce feeds to TAK', !!g.tak, (e) => save(e.target.checked ? 'TAK on' : 'TAK off', { tak: e.target.checked })),
+      field('Send to', takTo),
+      field('Video host', takHost),
+      el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: () => save('Saved', { takAddresses: lines(takTo.value), takVideoHost: takHost.value.trim() }) }, 'Save')))));
 }
 
 // ---------- map ----------
@@ -1551,7 +1697,10 @@ async function poll(force) {
     if (tick % CONFIG_EVERY === 0) {
       state.info = await api('GET', '/info');
       await refreshConfig();
+      await refreshFound();
       if (state.view === 'recordings') await refreshRecordings();
+    } else if (document.getElementById('found-dialog').open) {
+      await refreshFound();
     }
     await refreshPaths();
     if (state.view === 'feeds' && state.selected) await refreshSends();
@@ -1562,8 +1711,15 @@ async function poll(force) {
   polling = false;
   tick++;
   renderServer();
-  if (state.view === 'feeds') updateFeeds();
-  else if (state.view === 'wall') renderWall(false);
+  if (document.getElementById('found-dialog').open) renderFound();
+  if (state.view === 'feeds') {
+    // the button that opens the list of sources found appears and disappears with them
+    const fresh = state.found.items.filter((x) => !x.added).length;
+    const btn = document.getElementById('found-btn');
+    if (!!btn !== fresh > 0 && !document.querySelector('.detail :focus')) renderFeeds();
+    else if (btn) btn.textContent = 'Found ' + fresh;
+    updateFeeds();
+  } else if (state.view === 'wall') renderWall(false);
   else if (state.view === 'map') renderMapView();
 }
 
@@ -1650,9 +1806,11 @@ function renderFeeds() {
   }, el('option', { value: '' }, 'All feeds'), classes.map((cl) => el('option', { value: cl }, cl))) : null;
   if (filter) filter.value = state.classFilter;
 
+  const fresh = state.found.items.filter((x) => !x.added).length;
   const toolbar = el('div', { class: 'toolbar' },
     filter,
     el('span', { class: 'spacer' }),
+    fresh ? el('button', { class: 'btn', id: 'found-btn', onclick: openFound }, 'Found ' + fresh) : null,
     el('button', { class: 'btn primary', onclick: openAddDialog }, 'Add feed'));
 
   let body;
@@ -2274,7 +2432,7 @@ function writeHash() {
 }
 
 function readHash() {
-  const m = /^#(feeds|wall|map|recordings)(?:\/(.+))?$/.exec(location.hash);
+  const m = /^#(feeds|wall|map|recordings|settings)(?:\/(.+))?$/.exec(location.hash);
   if (!m) return;
   const name = m[2] ? decodeURIComponent(m[2]) : null;
   state.view = m[1];
@@ -2290,6 +2448,7 @@ function render() {
   if (state.view === 'feeds') renderFeeds();
   else if (state.view === 'wall') renderWall(true);
   else if (state.view === 'map') renderMapView();
+  else if (state.view === 'settings') renderSettings();
   else renderRecordings();
 }
 

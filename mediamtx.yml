@@ -208,6 +208,23 @@ pprofServerCert: server.crt
 pprofTrustedProxies: []
 
 ###############################################
+# Global settings -> Discovery
+
+# Look for video sources on the networks the server is connected to.
+# Sources that are found are listed by the API (/v3/discovery/list) and by the web UI,
+# from which they can be added with one click. Nothing is added automatically.
+# The server looks for:
+# * streams announced with SAP (multicast group 224.2.127.254:9875)
+# * ONVIF cameras, by sending a WS-Discovery probe every minute
+# * streams announced by TAK clients and servers (multicast group 239.2.3.1:6969)
+# * MPEG-TS streams sent to the multicast groups listed in discoveryMulticast
+discovery: false
+# Multicast groups to check for MPEG-TS streams, like the ones sent by aircraft sensors
+# and encoders, which are usually not announced. Each group is joined for a few seconds at a time.
+# Example: [239.1.1.1:5000, 239.1.1.2:5000]
+discoveryMulticast: []
+
+###############################################
 # Global settings -> TAK
 
 # Announce streams to TAK clients (ATAK, WinTAK, iTAK) and TAK servers.

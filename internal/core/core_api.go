@@ -166,6 +166,32 @@ func (p *Core) doAPIConfigPathDelete(name string) (*conf.Conf, error) {
 	return newConf, nil
 }
 
+// APIDiscoveryList implements apiParent.
+func (p *Core) APIDiscoveryList() *defs.APIDiscoveredSourceList {
+	finder := p.discoveryFinderAPI.Load()
+	cnf := p.apiConfigSnapshot()
+
+	ret := &defs.APIDiscoveredSourceList{Items: []defs.APIDiscoveredSource{}}
+	if finder == nil {
+		return ret
+	}
+
+	ret.Enabled = true
+	ret.Items = finder.List()
+
+	// tell which sources are being read already
+	for i := range ret.Items {
+		for _, pa := range cnf.Paths {
+			if pa.Source == ret.Items[i].Source {
+				ret.Items[i].Added = true
+				break
+			}
+		}
+	}
+
+	return ret
+}
+
 // APIConfigSnapshot implements apiParent.
 func (p *Core) APIConfigSnapshot() *conf.Conf {
 	return p.apiConfigSnapshot()

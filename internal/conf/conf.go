@@ -316,6 +316,10 @@ type Conf struct {
 	PPROFAllowOrigins   *[]string  `json:"pprofAllowOrigins,omitempty" deprecated:"true"`
 	PPROFTrustedProxies IPNetworks `json:"pprofTrustedProxies"`
 
+	// Discovery
+	Discovery          bool     `json:"discovery"`
+	DiscoveryMulticast []string `json:"discoveryMulticast"`
+
 	// TAK
 	TAK                  bool     `json:"tak"`
 	TAKAddresses         []string `json:"takAddresses"`
@@ -792,6 +796,14 @@ func (conf *Conf) validate(l logger.Writer) error {
 	}
 
 	// Playback
+
+	for _, addr := range conf.DiscoveryMulticast {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsMulticast() {
+			return fmt.Errorf("invalid discovery multicast address '%s': it must be in the form group:port, "+
+				"for instance 239.1.1.1:5000", addr)
+		}
+	}
 
 	if conf.TAK {
 		if !conf.RTSP {
