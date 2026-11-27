@@ -1140,6 +1140,8 @@ components:
         detectFPS:
           type: number
           format: double
+        detectKeyFramesOnly:
+          type: boolean
         detectModel:
           type: string
         detectModelType:

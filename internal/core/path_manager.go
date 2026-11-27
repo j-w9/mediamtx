@@ -51,6 +51,7 @@ func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
 	clone.DetectDevice = newPathConf.DetectDevice
 	clone.DetectModelType = newPathConf.DetectModelType
 	clone.DetectFPS = newPathConf.DetectFPS
+	clone.DetectKeyFramesOnly = newPathConf.DetectKeyFramesOnly
 	clone.DetectConfidence = newPathConf.DetectConfidence
 	clone.DetectModelsDir = newPathConf.DetectModelsDir
 	clone.DetectPython = newPathConf.DetectPython

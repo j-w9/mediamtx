@@ -267,15 +267,16 @@ type Path struct {
 	CompressPathSuffix   string `json:"compressPathSuffix"`
 
 	// Object detection
-	Detect           bool    `json:"detect"`
-	DetectModel      string  `json:"detectModel"`
-	DetectServer     string  `json:"detectServer"`
-	DetectDevice     string  `json:"detectDevice"`
-	DetectModelType  string  `json:"detectModelType"`
-	DetectFPS        float64 `json:"detectFPS"`
-	DetectConfidence float64 `json:"detectConfidence"`
-	DetectModelsDir  string  `json:"detectModelsDir"`
-	DetectPython     string  `json:"detectPython"`
+	Detect              bool    `json:"detect"`
+	DetectModel         string  `json:"detectModel"`
+	DetectServer        string  `json:"detectServer"`
+	DetectDevice        string  `json:"detectDevice"`
+	DetectModelType     string  `json:"detectModelType"`
+	DetectFPS           float64 `json:"detectFPS"`
+	DetectKeyFramesOnly bool    `json:"detectKeyFramesOnly"`
+	DetectConfidence    float64 `json:"detectConfidence"`
+	DetectModelsDir     string  `json:"detectModelsDir"`
+	DetectPython        string  `json:"detectPython"`
 
 	// Authentication (deprecated)
 	PublishUser *Credential `json:"publishUser,omitempty" deprecated:"true"`

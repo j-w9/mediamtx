@@ -24,7 +24,7 @@ func TestCommand(t *testing.T) {
 				CompressPathSuffix:   "_compressed",
 			},
 			"ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp" +
-				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path -map 0:v:0 -map 0:a?" +
+				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path?mtx_internal=1 -map 0:v:0 -map 0:a?" +
 				" -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p" +
 				" -b:v 1000k -maxrate 1000k -bufsize 2000k" +
 				" -force_key_frames 'expr:gte(t,n_forced*2)'" +
@@ -43,7 +43,7 @@ func TestCommand(t *testing.T) {
 				CompressPathSuffix:   "/low",
 			},
 			"ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp" +
-				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path -map 0:v:0 -map 0:a?" +
+				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path?mtx_internal=1 -map 0:v:0 -map 0:a?" +
 				" -c:v libx265 -x265-params log-level=warning" +
 				" -preset fast -tune zerolatency -pix_fmt yuv420p" +
 				" -b:v 2M -maxrate 2M -bufsize 4M" +
@@ -61,7 +61,7 @@ func TestCommand(t *testing.T) {
 				CompressPathSuffix:   "_compressed",
 			},
 			"ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp" +
-				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path -map 0:v:0 -map 0:a?" +
+				" -i rtsp://127.0.0.1:${RTSP_PORT}/my/path?mtx_internal=1 -map 0:v:0 -map 0:a?" +
 				" -c:v libsvtav1 -preset 10 -svtav1-params pred-struct=1:rc=2 -pix_fmt yuv420p" +
 				" -b:v 500000 -strict experimental" +
 				" -force_key_frames 'expr:gte(t,n_forced*2)'" +

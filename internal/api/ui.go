@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,6 +77,14 @@ func (a *API) onUI(ctx *gin.Context) {
 	ctx.Data(http.StatusOK, "text/html; charset=utf-8", uiIndex)
 }
 
+// gzip writers are large, and are requested every few seconds by each open page: reuse them.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return w
+	},
+}
+
 type gzipResponseWriter struct {
 	gin.ResponseWriter
 	gz *gzip.Writer
@@ -98,7 +108,8 @@ func (a *API) middlewareGzip(ctx *gin.Context) {
 		return
 	}
 
-	gz, _ := gzip.NewWriterLevel(ctx.Writer, gzip.BestSpeed)
+	gz := gzipWriterPool.Get().(*gzip.Writer)
+	gz.Reset(ctx.Writer)
 
 	ctx.Header("Content-Encoding", "gzip")
 	ctx.Header("Vary", "Accept-Encoding")
@@ -107,4 +118,5 @@ func (a *API) middlewareGzip(ctx *gin.Context) {
 	ctx.Next()
 
 	gz.Close() //nolint:errcheck
+	gzipWriterPool.Put(gz)
 }

@@ -21,6 +21,10 @@ var svtAV1Presets = map[string]string{
 	"veryslow":  "4",
 }
 
+// InternalQuery is added to the URLs used by the server to read its own streams
+// (compression, object detection), so that these readers are not reported as viewers.
+const InternalQuery = "mtx_internal=1"
+
 // IsOutputPath returns whether a path with the given name
 // is the output of a compression, and therefore must not be compressed again.
 func IsOutputPath(pathName string, cnf *conf.Path) bool {
@@ -54,7 +58,7 @@ func Command(cnf *conf.Path, pathName string) string {
 		"-hide_banner",
 		"-loglevel", "warning",
 		"-rtsp_transport", "tcp",
-		"-i", "rtsp://127.0.0.1:${RTSP_PORT}/" + pathName,
+		"-i", "rtsp://127.0.0.1:${RTSP_PORT}/" + pathName + "?" + InternalQuery,
 		// first video track, every audio track (if present)
 		"-map", "0:v:0",
 		"-map", "0:a?",

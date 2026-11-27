@@ -7,6 +7,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -157,6 +158,10 @@ func (w *Worker) runInner() error {
 		"--source", w.Source,
 		"--fps", strconv.FormatFloat(w.Conf.DetectFPS, 'f', -1, 64),
 		"--conf", strconv.FormatFloat(w.Conf.DetectConfidence, 'f', -1, 64))
+
+	if w.Conf.DetectKeyFramesOnly {
+		args = append(args, "--keyframes")
+	}
 
 	cmd := command(w.ctx, w.Conf.DetectPython, args)
 
@@ -346,28 +351,32 @@ func Describe(ctx context.Context, cnf *conf.Path) defs.APIDetectModel {
 	ret := defs.APIDetectModel{Name: cnf.DetectModel, Classes: []string{}}
 
 	err := cmd.Run()
-	if err != nil {
+
+	var msg workerMessage
+
+	switch {
+	case err != nil:
 		ret.Error = err.Error()
 
 		for line := range strings.SplitSeq(stderr.String(), "\n") {
-			if msg, ok := strings.CutPrefix(strings.TrimSpace(line), "error: "); ok {
-				ret.Error = msg
+			if m, ok := strings.CutPrefix(strings.TrimSpace(line), "error: "); ok {
+				ret.Error = m
 			}
 		}
 
-		return ret
-	}
+		// do not remember failures that are not caused by the model
+		if ctx.Err() != nil || errors.Is(err, exec.ErrNotFound) {
+			return ret
+		}
 
-	var msg workerMessage
-	err = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &msg)
-	if err != nil || len(msg.Input) != 2 {
+	case json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &msg) != nil || len(msg.Input) != 2:
 		ret.Error = "invalid reply from the worker"
-		return ret
-	}
 
-	ret.Classes = msg.Classes
-	ret.InputWidth = msg.Input[0]
-	ret.InputHeight = msg.Input[1]
+	default:
+		ret.Classes = msg.Classes
+		ret.InputWidth = msg.Input[0]
+		ret.InputHeight = msg.Input[1]
+	}
 
 	if cnf.DetectServer == "" {
 		describeMutex.Lock()

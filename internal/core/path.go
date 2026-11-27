@@ -6,6 +6,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -150,6 +151,7 @@ type path struct {
 	compressCmd                    *externalcmd.Cmd
 	compressOnDemandCmd            string
 	detectWorker                   *detect.Worker
+	internalReaders                map[defs.Reader]struct{}
 	onOfflineHook                  func()
 	readers                        map[defs.Reader]struct{}
 	describeRequestsOnHold         []defs.PathDescribeReq
@@ -501,6 +503,7 @@ func (pa *path) doReloadConf(newConf *conf.Path) {
 		newConf.DetectDevice != oldConf.DetectDevice ||
 		newConf.DetectModelType != oldConf.DetectModelType ||
 		newConf.DetectFPS != oldConf.DetectFPS ||
+		newConf.DetectKeyFramesOnly != oldConf.DetectKeyFramesOnly ||
 		newConf.DetectConfidence != oldConf.DetectConfidence ||
 		newConf.DetectModelsDir != oldConf.DetectModelsDir ||
 		newConf.DetectPython != oldConf.DetectPython {
@@ -756,6 +759,11 @@ func (pa *path) apiReaders() []defs.APIPathReader {
 	ret := make([]defs.APIPathReader, 0, len(pa.readers))
 
 	for r := range pa.readers {
+		// readers started by the server itself are not viewers
+		if _, ok := pa.internalReaders[r]; ok {
+			continue
+		}
+
 		desc := *r.APIReaderDescribe()
 		if desc.Type != defs.APIPathReaderTypeHidden {
 			ret = append(ret, desc)
@@ -919,7 +927,7 @@ func (pa *path) startDetecting() {
 
 	pa.detectWorker = &detect.Worker{
 		Conf:   pa.conf,
-		Source: "rtsp://127.0.0.1:" + port + "/" + pa.name,
+		Source: "rtsp://127.0.0.1:" + port + "/" + pa.name + "?" + compress.InternalQuery,
 		Parent: pa,
 	}
 	pa.detectWorker.Start()
@@ -1220,6 +1228,7 @@ func (pa *path) startRecording() {
 
 func (pa *path) executeRemoveReader(r defs.Reader) {
 	delete(pa.readers, r)
+	delete(pa.internalReaders, r)
 }
 
 func (pa *path) executeRemovePublisher() {
@@ -1248,6 +1257,16 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
 	}
 
 	pa.readers[req.Author] = struct{}{}
+
+	// a reader is internal when it comes from this machine and carries the internal marker,
+	// which is used by compression and object detection.
+	if req.AccessRequest.IP != nil && req.AccessRequest.IP.IsLoopback() &&
+		strings.Contains(req.AccessRequest.Query, compress.InternalQuery) {
+		if pa.internalReaders == nil {
+			pa.internalReaders = make(map[defs.Reader]struct{})
+		}
+		pa.internalReaders[req.Author] = struct{}{}
+	}
 
 	if pa.conf.HasOnDemandStaticSource() {
 		if pa.onDemandStaticSourceState == pathOnDemandStateClosing {

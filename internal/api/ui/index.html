@@ -827,6 +827,15 @@ function feeds() {
   return list;
 }
 
+// a labelled control. The label is tied to the control so that it is announced by screen readers
+// and so that clicking it focuses the control.
+let fieldSeq = 0;
+
+function field(label, input, cls) {
+  if (!input.id) input.id = 'f' + (++fieldSeq);
+  return el('div', { class: 'field' + (cls ? ' ' + cls : '') }, el('label', { for: input.id }, label), input);
+}
+
 // ---------- object detection ----------
 
 function countObjects(d) {
@@ -960,27 +969,32 @@ function renderDetectSection(name, c, p) {
   const device = el('select', {}, [['auto', 'Auto'], ['cpu', 'CPU'], ['gpu', 'GPU']].map(([v, t]) => el('option', { value: v }, t)));
   device.value = c.detectDevice || 'auto';
   const fps = el('input', { type: 'number', min: '0.1', max: '30', step: '0.1', value: String(c.detectFPS || 2) });
+  const frames = el('select', {}, el('option', { value: 'rate' }, 'By frame rate'), el('option', { value: 'key' }, 'Key frames only (lightest)'));
+  frames.value = c.detectKeyFramesOnly ? 'key' : 'rate';
   const conf = el('input', { type: 'number', min: '0.05', max: '0.95', step: '0.05', value: String(c.detectConfidence || 0.4) });
 
-  const row = (label, input) => el('div', { class: 'field' }, el('label', {}, label), input);
+  const row = field;
   const localRows = [row('Model', modelSelect), row('Device', device)];
   const remoteRows = [row('Server', server), row('Model', modelName)];
+  const fpsRow = row('Frame rate', fps);
   const toggle = () => {
     for (const r of localRows) r.hidden = where.value !== 'local';
     for (const r of remoteRows) r.hidden = where.value !== 'remote';
+    fpsRow.hidden = frames.value === 'key';
   };
   where.addEventListener('change', toggle);
+  frames.addEventListener('change', toggle);
   toggle();
 
   section.append(
     row('Run on', where), ...localRows, ...remoteRows,
-    row('Frame rate', fps), row('Confidence', conf),
+    row('Analyze', frames), fpsRow, row('Confidence', conf),
     el('div', { class: 'actions' },
       el('button', {
         class: 'btn primary',
         onclick: () => act('Saved', () => saveSettings(name, where.value === 'remote'
-          ? { detectServer: server.value.trim(), detectModel: modelName.value.trim(), detectFPS: Number(fps.value), detectConfidence: Number(conf.value) }
-          : { detectServer: '', detectModel: modelSelect.value, detectDevice: device.value, detectFPS: Number(fps.value), detectConfidence: Number(conf.value) })),
+          ? { detectServer: server.value.trim(), detectModel: modelName.value.trim(), detectFPS: Number(fps.value), detectKeyFramesOnly: frames.value === 'key', detectConfidence: Number(conf.value) }
+          : { detectServer: '', detectModel: modelSelect.value, detectDevice: device.value, detectFPS: Number(fps.value), detectKeyFramesOnly: frames.value === 'key', detectConfidence: Number(conf.value) })),
       }, 'Save'),
       el('span', { class: 'hint', id: 'detect-status', style: 'margin:0;align-self:center' }, detectStatus(d))),
     el('div', { class: 'chips', id: 'detect-now', style: 'margin-top:10px' }, objectChips(d)));
@@ -1072,10 +1086,12 @@ async function refreshSends() {
   if (!name) { state.sends = null; return; }
   const c = confOf(name) || {};
   const get = async (n) => {
+    // only live feeds have destinations to report; asking for others is an error on the server
+    if (!state.paths.some((p) => p.name === n && p.available)) return [];
     try {
       return (await api('GET', '/paths/forward-dests/list?itemsPerPage=1000&path=' + encodeURIComponent(n))).items;
     } catch (e) {
-      return []; // the feed is not live
+      return [];
     }
   };
   const original = await get(name);
@@ -1217,11 +1233,42 @@ function renderFeeds() {
     body = el('div', { class: 'strips', id: 'strips' }, list.map(stripFor));
   }
 
-  const layout = el('div', { class: 'layout' + (state.selected ? ' with-panel' : '') },
-    el('div', {}, toolbar, body),
-    state.selected ? renderDetail() : null);
+  // the page skeleton is kept between renders, so that the player of the open feed keeps playing
+  let layout = document.getElementById('feeds-layout');
+  if (!layout) {
+    layout = el('div', { class: 'layout', id: 'feeds-layout' }, el('div', { id: 'feeds-left' }));
+    main.replaceChildren(layout);
+  }
+  layout.classList.toggle('with-panel', !!state.selected);
 
-  main.replaceChildren(layout);
+  const hadFocus = document.activeElement && document.activeElement.closest('#feeds-left .strip');
+  const focusName = hadFocus ? hadFocus.getAttribute('data-name') : null;
+  document.getElementById('feeds-left').replaceChildren(toolbar, body);
+  if (focusName) {
+    const again = [...document.querySelectorAll('.strip')].find((x) => x.getAttribute('data-name') === focusName);
+    if (again) again.focus();
+  }
+
+  const old = layout.querySelector('.detail');
+  const panel = state.selected ? renderDetail() : null;
+
+  if (!panel) {
+    if (old) old.remove();
+  } else if (old && old.getAttribute('data-key') === panel.getAttribute('data-key')) {
+    // same feed and same picture: replace everything but the player
+    const keep = old.querySelector('section.view');
+    const scroll = old.scrollTop;
+    for (const ch of [...old.children]) if (ch !== keep) ch.remove();
+    const fresh = [...panel.children];
+    const at = fresh.findIndex((c) => c.classList.contains('view'));
+    for (const ch of fresh.slice(0, at)) old.insertBefore(ch, keep);
+    for (const ch of fresh.slice(at + 1)) old.append(ch);
+    old.scrollTop = scroll;
+  } else if (old) {
+    old.replaceWith(panel);
+  } else {
+    layout.append(panel);
+  }
 }
 
 // refresh the strips without touching the detail panel, which holds a live player
@@ -1229,13 +1276,22 @@ function updateFeeds() {
   const strips = document.getElementById('strips');
   const list = visibleFeeds();
   const filter = document.getElementById('class-filter');
-  if (!!filter !== knownClasses().length > 0 && !document.querySelector('.detail :focus')) { renderFeeds(); return; }
+  const busy = !!document.querySelector('.detail :focus');
+  if (!!filter !== knownClasses().length > 0 && !busy) { renderFeeds(); return; }
   if (!strips || strips.children.length !== list.length ||
     list.some((f, i) => strips.children[i].getAttribute('data-name') !== f.name)) {
-    if (!document.querySelector('.detail :focus')) renderFeeds();
+    if (!busy) renderFeeds();
     return;
   }
-  list.forEach((f, i) => strips.children[i].replaceWith(stripFor(f)));
+  // only the strips whose content changed are replaced, and keyboard focus stays where it was
+  list.forEach((f, i) => {
+    const cur = strips.children[i];
+    const next = stripFor(f);
+    if (cur.innerHTML === next.innerHTML && cur.className === next.className) return;
+    const focused = document.activeElement === cur;
+    cur.replaceWith(next);
+    if (focused) next.focus();
+  });
   updateViewers();
   updateSends();
   updateDetection();
@@ -1246,6 +1302,11 @@ function select(name) {
   state.variant = 'original';
   state.sends = null;
   render();
+  // on narrow screens the panel sits below the list: bring it into view
+  if (state.selected && window.matchMedia('(max-width: 980px)').matches) {
+    const panel = document.querySelector('.detail');
+    if (panel) panel.scrollIntoView({ block: 'start' });
+  }
   refreshSends().then(updateSends, () => {});
   if (state.selected) {
     refreshModels().then(() => { if (!document.querySelector('.detail :focus')) render(); });
@@ -1452,9 +1513,9 @@ function renderSendSection(name, c) {
   return el('section', {},
     el('h3', {}, 'Restream'),
     el('ul', { class: 'rows', id: 'sends' }, sendRows()),
-    el('div', { class: 'field' }, el('label', {}, 'To'), kind),
-    el('div', { class: 'field' }, el('label', {}, 'Address'), address),
-    el('div', { class: 'field' }, el('label', {}, 'Stream'), version),
+    field('To', kind),
+    field('Address', address),
+    field('Stream', version),
     el('div', { class: 'actions' }, el('button', { class: 'btn primary', onclick: start }, 'Start')));
 }
 
@@ -1471,7 +1532,11 @@ function renderDetail() {
   const compressedName = name + (c.compressPathSuffix || '_compressed');
   const shown = state.variant === 'compressed' && c.compress ? compressedName : name;
 
-  const panel = el('aside', { class: 'detail' });
+  // identifies the picture shown by the player: while it stays the same, the player is not rebuilt
+  const panel = el('aside', {
+    class: 'detail',
+    'data-key': [name, shown, live, playerURL(shown), !!c.compress, !!derived].join('|'),
+  });
 
   panel.append(el('header', {},
     el('span', { class: 'tally' + (p && p.recording ? ' rec' : (live ? ' on' : '')) }),
@@ -1479,7 +1544,7 @@ function renderDetail() {
     el('button', { class: 'btn', onclick: () => select(name), 'aria-label': 'Close' }, 'Close')));
 
   // live view
-  const view = el('section', {});
+  const view = el('section', { class: 'view' });
   view.append(screenFor(shown, live));
   if (c.compress && !derived) {
     view.append(el('div', { class: 'actions' },
@@ -1510,7 +1575,7 @@ function renderDetail() {
 
   // compression
   const form = {};
-  const fieldRow = (label, input) => el('div', { class: 'field' }, el('label', {}, label), input);
+  const fieldRow = field;
   const selectOf = (key, options) => {
     form[key] = el('select', {}, options.map(([v, t]) => el('option', { value: String(v) }, t)));
     const cur = String(c[key] === undefined ? options[0][0] : c[key]);
@@ -1552,6 +1617,11 @@ function renderDetail() {
             compressAudioBitrate: form.compressAudioBitrate.value,
           })),
         }, 'Save')));
+  }
+  const origRate = state.rates[name];
+  const compRate = state.rates[compressedName];
+  if (c.compress && origRate && compRate && compRate >= origRate * 0.95) {
+    comp.append(el('p', { class: 'hint', style: 'color:var(--amber)' }, 'Not smaller than the original. Lower the bitrate.'));
   }
   panel.append(comp);
 
@@ -1747,7 +1817,28 @@ function renderRecordings() {
 
 // ---------- routing ----------
 
+function writeHash() {
+  let h = '#' + state.view;
+  if (state.view === 'feeds' && state.selected) h += '/' + encodeName(state.selected);
+  if (state.view === 'recordings' && state.recName) h += '/' + encodeName(state.recName);
+  if (h === '#feeds') h = location.pathname;
+  if ((location.hash || location.pathname) !== h) history.replaceState(null, '', h);
+}
+
+function readHash() {
+  const m = /^#(feeds|wall|recordings)(?:\/(.+))?$/.exec(location.hash);
+  if (!m) return;
+  const name = m[2] ? decodeURIComponent(m[2]) : null;
+  state.view = m[1];
+  if (m[1] === 'feeds') state.selected = name;
+  if (m[1] === 'recordings') state.recName = name;
+  for (const o of document.querySelectorAll('.tabs button')) {
+    o.setAttribute('aria-selected', String(o.getAttribute('data-view') === state.view));
+  }
+}
+
 function render() {
+  writeHash();
   if (state.view === 'feeds') renderFeeds();
   else if (state.view === 'wall') renderWall(true);
   else renderRecordings();
@@ -1766,8 +1857,17 @@ for (const b of document.querySelectorAll('.tabs button')) {
   });
 }
 
+window.addEventListener('hashchange', async () => {
+  readHash();
+  if (state.view === 'recordings') { try { await refreshRecordings(); } catch (e) { /* shown as empty */ } }
+  render();
+});
+
 (async () => {
+  readHash();
   await poll();
+  if (state.view === 'recordings') { try { await refreshRecordings(); } catch (e) { /* shown as empty */ } }
+  if (state.selected) { refreshSends().then(updateSends, () => {}); refreshModels().then(render); }
   render();
   setInterval(poll, POLL_MS);
 })();

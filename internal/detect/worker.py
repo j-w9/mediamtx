@@ -425,7 +425,16 @@ def run(args):
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
     if args.source.startswith("rtsp"):
         cmd += ["-rtsp_transport", "tcp"]
-    cmd += ["-i", args.source, "-map", "0:v:0", "-an", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    # decoding is most of the cost of analyzing a stream. Frames are only fed to a model,
+    # so the deblocking filter is skipped, and so are frames that no other frame depends on.
+    # When only key frames are wanted, nothing else is decoded at all.
+    if args.keyframes:
+        cmd += ["-skip_frame", "nokey"]
+        vf = vf.split(",", 1)[1]
+    else:
+        cmd += ["-skip_loop_filter", "all", "-skip_frame", "noref"]
+    cmd += ["-i", args.source, "-map", "0:v:0", "-an", "-vf", vf, "-fps_mode", "passthrough",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
 
     ffmpeg = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
@@ -492,6 +501,7 @@ def main():
     parser.add_argument("--type", default="auto", choices=["auto", "v8", "v5", "yolox"])
     parser.add_argument("--source", default="", help="stream to analyze")
     parser.add_argument("--fps", default="2", help="frames to analyze per second")
+    parser.add_argument("--keyframes", action="store_true", help="analyze key frames only")
     parser.add_argument("--conf", type=float, default=0.4, help="minimum confidence")
     parser.add_argument("--describe", action="store_true", help="print the properties of the model and exit")
     args = parser.parse_args()
