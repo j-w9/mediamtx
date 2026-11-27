@@ -1037,6 +1037,11 @@ components:
           deprecated: true
         confName:
           type: string
+        detection:
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/PathDetection"
+          nullable: true
         forwardDestCount:
           type: integer
           format: uint64
@@ -1124,6 +1129,27 @@ components:
         compressVideoHeight:
           type: integer
           format: int64
+        detect:
+          type: boolean
+          description: Object detection
+        detectConfidence:
+          type: number
+          format: double
+        detectDevice:
+          type: string
+        detectFPS:
+          type: number
+          format: double
+        detectModel:
+          type: string
+        detectModelType:
+          type: string
+        detectModelsDir:
+          type: string
+        detectPython:
+          type: string
+        detectServer:
+          type: string
         disablePublisherOverride:
           type: boolean
           nullable: true

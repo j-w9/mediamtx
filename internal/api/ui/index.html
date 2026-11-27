@@ -181,7 +181,7 @@ main { padding: 20px; }
 
 .strip {
   display: grid;
-  grid-template-columns: 20px minmax(140px, 1.4fr) minmax(120px, 1fr) minmax(170px, 1.2fr) 90px 200px;
+  grid-template-columns: 20px minmax(140px, 1.4fr) minmax(70px, 0.6fr) minmax(150px, 1.2fr) 80px minmax(150px, 1.4fr);
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
@@ -238,6 +238,7 @@ main { padding: 20px; }
 
 .strip .flags {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
 }
@@ -363,6 +364,36 @@ main { padding: 20px; }
 .copy { display: flex; gap: 6px; min-width: 0; }
 
 .copy input { flex: 1; min-width: 0; text-overflow: ellipsis; }
+
+.stage { position: relative; }
+
+.overlay {
+  position: absolute;
+  pointer-events: none;
+}
+
+.overlay .box {
+  position: absolute;
+  border: 2px solid var(--amber);
+  border-radius: 2px;
+}
+
+.overlay .box span {
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  background: var(--amber);
+  color: #1c1503;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.flag.obj { color: var(--ink); border-color: var(--dim); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .switch {
   display: flex;
@@ -610,6 +641,8 @@ const state = {
   recSegments: [],
   recPlaying: null,
   connected: false,
+  models: null,       // detection models available on the server
+  classFilter: '',    // show only feeds where this class was detected
   sends: null,        // status of the destinations of the selected feed
   sendPrev: {},       // destination id -> {bytes, time}
   sendRates: {},      // destination id -> bits per second
@@ -794,6 +827,177 @@ function feeds() {
   return list;
 }
 
+// ---------- object detection ----------
+
+function countObjects(d) {
+  const counts = new Map();
+  for (const o of (d && d.objects) || []) counts.set(o.class, (counts.get(o.class) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function objectChips(d) {
+  return countObjects(d).map(([name, n]) => el('span', { class: 'flag obj' }, n > 1 ? name + ' ' + n : name));
+}
+
+// classes of every model that is running, the ones seen most recently first
+function knownClasses() {
+  const last = new Map();
+  for (const p of state.paths) {
+    const d = p.detection;
+    if (!d) continue;
+    for (const c of d.classes) if (!last.has(c)) last.set(c, 0);
+    for (const sn of d.seen) last.set(sn.class, Math.max(last.get(sn.class) || 0, new Date(sn.time).getTime()));
+  }
+  return [...last.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map((e) => e[0]);
+}
+
+function lastSeen(p, cls) {
+  const sn = p && p.detection && p.detection.seen.find((x) => x.class === cls);
+  return sn ? new Date(sn.time).getTime() : 0;
+}
+
+// the feeds to list: all of them, or the ones where the chosen class was seen, latest first
+function visibleFeeds() {
+  const list = feeds();
+  const cls = state.classFilter;
+  if (!cls) return list;
+  return list.filter((f) => lastSeen(f.live, cls) > 0).sort((a, b) => lastSeen(b.live, cls) - lastSeen(a.live, cls));
+}
+
+async function refreshModels() {
+  try {
+    state.models = (await api('GET', '/detect/models/list')).items;
+  } catch (e) {
+    state.models = [];
+  }
+}
+
+// boxes are drawn over the player, inside the area actually covered by the picture
+function updateOverlay() {
+  const overlay = document.getElementById('overlay');
+  if (!overlay) return;
+  const p = state.paths.find((x) => x.name === state.selected);
+  const d = p && p.detection;
+  if (!d || !d.frameWidth) { overlay.replaceChildren(); return; }
+
+  const aspect = d.frameWidth / d.frameHeight;
+  const stage = 16 / 9;
+  const w = aspect >= stage ? 100 : 100 * aspect / stage;
+  const h = aspect >= stage ? 100 * stage / aspect : 100;
+  overlay.style.cssText = 'left:' + (100 - w) / 2 + '%;top:' + (100 - h) / 2 + '%;width:' + w + '%;height:' + h + '%';
+
+  overlay.replaceChildren(...d.objects.map((o) => el('div', {
+    class: 'box',
+    style: 'left:' + o.x * 100 + '%;top:' + o.y * 100 + '%;width:' + o.w * 100 + '%;height:' + o.h * 100 + '%',
+  }, el('span', {}, o.class + ' ' + Math.round(o.score * 100) + '%'))));
+}
+
+function detectStatus(d) {
+  if (!d) return 'Starting';
+  if (d.error) return d.error;
+  if (!d.lastFrame) return 'Starting';
+  return d.device + ', ' + Math.round(d.inferenceMs) + ' ms';
+}
+
+function updateDetection() {
+  updateOverlay();
+  const p = state.paths.find((x) => x.name === state.selected);
+  const d = p && p.detection;
+  const status = document.getElementById('detect-status');
+  if (status) status.textContent = detectStatus(d);
+  const now = document.getElementById('detect-now');
+  if (now) now.replaceChildren(...objectChips(d));
+  // the list of classes becomes known a moment after detection starts
+  if (now && d && d.classes.length && !document.querySelector('.detail details') && !document.querySelector('.detail :focus')) {
+    render();
+  }
+}
+
+// while a feed with detection is open, its boxes are refreshed more often than the rest of the page
+setInterval(async () => {
+  if (document.hidden || state.view !== 'feeds' || !state.selected) return;
+  const i = state.paths.findIndex((x) => x.name === state.selected);
+  if (i < 0 || !state.paths[i].detection) return;
+  try {
+    const p = await api('GET', '/paths/get/' + encodeName(state.selected));
+    const j = state.paths.findIndex((x) => x.name === p.name);
+    if (j >= 0) { state.paths[j].detection = p.detection; updateDetection(); }
+  } catch (e) { /* the next poll reports it */ }
+}, 700);
+
+function renderDetectSection(name, c, p) {
+  const d = p && p.detection;
+  const section = el('section', {},
+    el('label', { class: 'switch', style: c.detect ? '' : 'margin:0' },
+      el('input', {
+        type: 'checkbox',
+        checked: !!c.detect,
+        onchange: (e) => act(e.target.checked ? 'Detection on' : 'Detection off', async () => {
+          const changes = { detect: e.target.checked };
+          if (e.target.checked && !c.detectModel) {
+            if (!state.models) await refreshModels();
+            const first = state.models.find((m) => !m.error);
+            if (!first) throw new Error('no models found. Put a .onnx file in ' + (c.detectModelsDir || './models'));
+            changes.detectModel = first.name;
+          }
+          await saveSettings(name, changes);
+        }),
+      }),
+      'Detect'));
+
+  if (!c.detect) return section;
+
+  const remote = !!c.detectServer;
+  const where = el('select', {}, el('option', { value: 'local' }, 'This server'), el('option', { value: 'remote' }, 'Inference server'));
+  where.value = remote ? 'remote' : 'local';
+
+  const models = (state.models || []).map((m) => m.name);
+  if (!remote && c.detectModel && !models.includes(c.detectModel)) models.unshift(c.detectModel);
+  const modelSelect = el('select', {}, models.map((m) => el('option', { value: m }, m)));
+  modelSelect.value = c.detectModel || '';
+  const modelName = el('input', { type: 'text', value: remote ? c.detectModel || '' : '', placeholder: 'model name', spellcheck: 'false' });
+  const server = el('input', { type: 'text', value: c.detectServer || '', placeholder: 'http://host:8000', spellcheck: 'false' });
+  const device = el('select', {}, [['auto', 'Auto'], ['cpu', 'CPU'], ['gpu', 'GPU']].map(([v, t]) => el('option', { value: v }, t)));
+  device.value = c.detectDevice || 'auto';
+  const fps = el('input', { type: 'number', min: '0.1', max: '30', step: '0.1', value: String(c.detectFPS || 2) });
+  const conf = el('input', { type: 'number', min: '0.05', max: '0.95', step: '0.05', value: String(c.detectConfidence || 0.4) });
+
+  const row = (label, input) => el('div', { class: 'field' }, el('label', {}, label), input);
+  const localRows = [row('Model', modelSelect), row('Device', device)];
+  const remoteRows = [row('Server', server), row('Model', modelName)];
+  const toggle = () => {
+    for (const r of localRows) r.hidden = where.value !== 'local';
+    for (const r of remoteRows) r.hidden = where.value !== 'remote';
+  };
+  where.addEventListener('change', toggle);
+  toggle();
+
+  section.append(
+    row('Run on', where), ...localRows, ...remoteRows,
+    row('Frame rate', fps), row('Confidence', conf),
+    el('div', { class: 'actions' },
+      el('button', {
+        class: 'btn primary',
+        onclick: () => act('Saved', () => saveSettings(name, where.value === 'remote'
+          ? { detectServer: server.value.trim(), detectModel: modelName.value.trim(), detectFPS: Number(fps.value), detectConfidence: Number(conf.value) }
+          : { detectServer: '', detectModel: modelSelect.value, detectDevice: device.value, detectFPS: Number(fps.value), detectConfidence: Number(conf.value) })),
+      }, 'Save'),
+      el('span', { class: 'hint', id: 'detect-status', style: 'margin:0;align-self:center' }, detectStatus(d))),
+    el('div', { class: 'chips', id: 'detect-now', style: 'margin-top:10px' }, objectChips(d)));
+
+  if (d && d.classes.length) {
+    section.append(el('details', { style: 'margin-top:10px' },
+      el('summary', { class: 'hint', style: 'margin:0;cursor:pointer' }, d.classes.length + ' classes'),
+      el('div', { class: 'chips', style: 'margin-top:8px' }, d.classes.map((cl) => el('button', {
+        class: 'flag',
+        style: 'background:none;cursor:pointer',
+        onclick: () => { state.classFilter = cl; render(); },
+      }, cl)))));
+  }
+
+  return section;
+}
+
 // ---------- changing settings ----------
 
 // Settings are stored per feed. When a feed still uses shared settings,
@@ -916,7 +1120,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     // stop every live player: video is by far what uses the most bandwidth
     for (const f of document.querySelectorAll('iframe.screen')) {
-      f.replaceWith(el('div', { class: 'screen off' }, 'Paused'));
+      (f.closest('.stage') || f).replaceWith(el('div', { class: 'screen off' }, 'Paused'));
     }
     state.prev = {};
   } else {
@@ -973,20 +1177,37 @@ function stripFor(f) {
     el('div', { class: 'value' }, p && p.available && rate !== null ? fmtRate(rate) : '')),
   el('div', { class: 'sub viewers' }, viewers + (viewers === 1 ? ' viewer' : ' viewers')),
   el('div', { class: 'flags' },
+    objectChips(p && p.detection),
+    state.classFilter && p && !countObjects(p.detection).some((e) => e[0] === state.classFilter) && lastSeen(p, state.classFilter)
+      ? el('span', { class: 'flag' }, state.classFilter + ' ' + fmtDuration((Date.now() - lastSeen(p, state.classFilter)) / 1000) + ' ago') : null,
     p && p.recording ? el('span', { class: 'flag rec' }, 'Rec') : null,
     !derived && f.conf && f.conf.compress ? el('span', { class: 'flag cmp' }, 'Compress') : null));
 }
 
 function renderFeeds() {
   const main = document.getElementById('main');
-  const list = feeds();
+  const all = feeds();
+  const list = visibleFeeds();
+
+  const classes = knownClasses();
+  if (state.classFilter && !classes.includes(state.classFilter)) classes.unshift(state.classFilter);
+  const filter = classes.length ? el('select', {
+    id: 'class-filter',
+    'aria-label': 'Filter by detected object',
+    style: 'background:var(--panel);border:1px solid var(--rail);border-radius:var(--radius);padding:6px 8px',
+    onchange: (e) => { state.classFilter = e.target.value; render(); },
+  }, el('option', { value: '' }, 'All feeds'), classes.map((cl) => el('option', { value: cl }, cl))) : null;
+  if (filter) filter.value = state.classFilter;
 
   const toolbar = el('div', { class: 'toolbar' },
+    filter,
     el('span', { class: 'spacer' }),
     el('button', { class: 'btn primary', onclick: openAddDialog }, 'Add feed'));
 
   let body;
-  if (!list.length) {
+  if (!list.length && all.length) {
+    body = el('div', { class: 'empty' }, el('h2', {}, 'No feeds with ' + state.classFilter));
+  } else if (!list.length) {
     const g = state.global;
     const rtsp = g && g.rtsp ? 'rtsp://' + location.hostname + ':' + portOf(g.rtspAddress) + '/camera1' : null;
     body = el('div', { class: 'empty' },
@@ -1006,7 +1227,9 @@ function renderFeeds() {
 // refresh the strips without touching the detail panel, which holds a live player
 function updateFeeds() {
   const strips = document.getElementById('strips');
-  const list = feeds();
+  const list = visibleFeeds();
+  const filter = document.getElementById('class-filter');
+  if (!!filter !== knownClasses().length > 0 && !document.querySelector('.detail :focus')) { renderFeeds(); return; }
   if (!strips || strips.children.length !== list.length ||
     list.some((f, i) => strips.children[i].getAttribute('data-name') !== f.name)) {
     if (!document.querySelector('.detail :focus')) renderFeeds();
@@ -1015,6 +1238,7 @@ function updateFeeds() {
   list.forEach((f, i) => strips.children[i].replaceWith(stripFor(f)));
   updateViewers();
   updateSends();
+  updateDetection();
 }
 
 function select(name) {
@@ -1023,6 +1247,9 @@ function select(name) {
   state.sends = null;
   render();
   refreshSends().then(updateSends, () => {});
+  if (state.selected) {
+    refreshModels().then(() => { if (!document.querySelector('.detail :focus')) render(); });
+  }
 }
 
 // ---------- detail panel ----------
@@ -1035,7 +1262,9 @@ function screenFor(name, live) {
   if (!live) {
     return el('div', { class: 'screen off' }, 'Offline');
   }
-  return el('iframe', { class: 'screen', src: url, allow: 'autoplay; fullscreen', title: 'Live view of ' + name });
+  return el('div', { class: 'stage' },
+    el('iframe', { class: 'screen', src: url, allow: 'autoplay; fullscreen', title: 'Live view of ' + name }),
+    el('div', { class: 'overlay', id: 'overlay' }));
 }
 
 function updateViewers() {
@@ -1325,6 +1554,8 @@ function renderDetail() {
         }, 'Save')));
   }
   panel.append(comp);
+
+  panel.append(renderDetectSection(name, c, p));
 
   // sending elsewhere
   panel.append(renderSendSection(name, c));

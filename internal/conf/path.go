@@ -266,6 +266,17 @@ type Path struct {
 	CompressAudioBitrate string `json:"compressAudioBitrate"`
 	CompressPathSuffix   string `json:"compressPathSuffix"`
 
+	// Object detection
+	Detect           bool    `json:"detect"`
+	DetectModel      string  `json:"detectModel"`
+	DetectServer     string  `json:"detectServer"`
+	DetectDevice     string  `json:"detectDevice"`
+	DetectModelType  string  `json:"detectModelType"`
+	DetectFPS        float64 `json:"detectFPS"`
+	DetectConfidence float64 `json:"detectConfidence"`
+	DetectModelsDir  string  `json:"detectModelsDir"`
+	DetectPython     string  `json:"detectPython"`
+
 	// Authentication (deprecated)
 	PublishUser *Credential `json:"publishUser,omitempty" deprecated:"true"`
 	PublishPass *Credential `json:"publishPass,omitempty" deprecated:"true"`
@@ -413,6 +424,14 @@ func (pconf *Path) setDefaults() {
 	pconf.CompressVideoBitrate = "1000k"
 	pconf.CompressPreset = "veryfast"
 	pconf.CompressPathSuffix = "_compressed"
+
+	// Object detection
+	pconf.DetectDevice = "auto"
+	pconf.DetectModelType = "auto"
+	pconf.DetectFPS = 2
+	pconf.DetectConfidence = 0.4
+	pconf.DetectModelsDir = "./models"
+	pconf.DetectPython = "python3"
 
 	// Publisher source
 	pconf.OverridePublisher = true
@@ -1002,6 +1021,64 @@ func (pconf *Path) validate(
 
 		if conf.RTSPEncryption == EncryptionStrict {
 			return fmt.Errorf("'compress' cannot be used when 'rtspEncryption' is 'strict'")
+		}
+	}
+
+	// Object detection
+
+	switch pconf.DetectDevice {
+	case "auto", "cpu", "gpu":
+	default:
+		return fmt.Errorf("invalid 'detectDevice': '%s' (available values are 'auto', 'cpu' and 'gpu')",
+			pconf.DetectDevice)
+	}
+
+	switch pconf.DetectModelType {
+	case "auto", "v8", "v5", "yolox":
+	default:
+		return fmt.Errorf("invalid 'detectModelType': '%s' (available values are 'auto', 'v8', 'v5' and 'yolox')",
+			pconf.DetectModelType)
+	}
+
+	if pconf.DetectFPS <= 0 || pconf.DetectFPS > 30 {
+		return fmt.Errorf("'detectFPS' must be greater than 0 and not greater than 30")
+	}
+
+	if pconf.DetectConfidence <= 0 || pconf.DetectConfidence >= 1 {
+		return fmt.Errorf("'detectConfidence' must be between 0 and 1")
+	}
+
+	if pconf.DetectModel != "" {
+		// the model is a file inside detectModelsDir or the name of a model on a server
+		err = IsValidPathName(pconf.DetectModel)
+		if err != nil {
+			return fmt.Errorf("invalid 'detectModel': %w", err)
+		}
+	}
+
+	if pconf.DetectServer != "" {
+		u, err2 := url.Parse(pconf.DetectServer)
+		if err2 != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("invalid 'detectServer': '%s' (it must be a HTTP or HTTPS URL)", pconf.DetectServer)
+		}
+	}
+
+	if pconf.DetectPython == "" {
+		return fmt.Errorf("'detectPython' cannot be empty")
+	}
+
+	if pconf.Detect {
+		if pconf.DetectModel == "" {
+			return fmt.Errorf("'detect' requires 'detectModel'")
+		}
+
+		if !conf.RTSP {
+			return fmt.Errorf("'detect' requires the RTSP server to be enabled, " +
+				"since it is used to hand streams over to the detection worker")
+		}
+
+		if conf.RTSPEncryption == EncryptionStrict {
+			return fmt.Errorf("'detect' cannot be used when 'rtspEncryption' is 'strict'")
 		}
 	}
 

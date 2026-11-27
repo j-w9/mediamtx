@@ -45,6 +45,16 @@ func pathConfCanBeUpdated(oldPathConf *conf.Path, newPathConf *conf.Path) bool {
 	clone.CompressAudioBitrate = newPathConf.CompressAudioBitrate
 	clone.CompressPathSuffix = newPathConf.CompressPathSuffix
 
+	clone.Detect = newPathConf.Detect
+	clone.DetectModel = newPathConf.DetectModel
+	clone.DetectServer = newPathConf.DetectServer
+	clone.DetectDevice = newPathConf.DetectDevice
+	clone.DetectModelType = newPathConf.DetectModelType
+	clone.DetectFPS = newPathConf.DetectFPS
+	clone.DetectConfidence = newPathConf.DetectConfidence
+	clone.DetectModelsDir = newPathConf.DetectModelsDir
+	clone.DetectPython = newPathConf.DetectPython
+
 	clone.RPICameraBrightness = newPathConf.RPICameraBrightness
 	clone.RPICameraContrast = newPathConf.RPICameraContrast
 	clone.RPICameraSaturation = newPathConf.RPICameraSaturation

@@ -16,6 +16,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/compress"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/defs"
+	"github.com/bluenviron/mediamtx/internal/detect"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
 	"github.com/bluenviron/mediamtx/internal/formatlabel"
 	"github.com/bluenviron/mediamtx/internal/forward"
@@ -148,6 +149,7 @@ type path struct {
 	onUnavailableHook              func()
 	compressCmd                    *externalcmd.Cmd
 	compressOnDemandCmd            string
+	detectWorker                   *detect.Worker
 	onOfflineHook                  func()
 	readers                        map[defs.Reader]struct{}
 	describeRequestsOnHold         []defs.PathDescribeReq
@@ -493,6 +495,22 @@ func (pa *path) doReloadConf(newConf *conf.Path) {
 		}
 	}
 
+	if newConf.Detect != oldConf.Detect ||
+		newConf.DetectModel != oldConf.DetectModel ||
+		newConf.DetectServer != oldConf.DetectServer ||
+		newConf.DetectDevice != oldConf.DetectDevice ||
+		newConf.DetectModelType != oldConf.DetectModelType ||
+		newConf.DetectFPS != oldConf.DetectFPS ||
+		newConf.DetectConfidence != oldConf.DetectConfidence ||
+		newConf.DetectModelsDir != oldConf.DetectModelsDir ||
+		newConf.DetectPython != oldConf.DetectPython {
+		pa.stopDetecting()
+
+		if pa.stream != nil {
+			pa.startDetecting()
+		}
+	}
+
 	if pa.recorder != nil &&
 		(newConf.Record != oldConf.Record ||
 			newConf.RecordPath != oldConf.RecordPath ||
@@ -795,6 +813,12 @@ func (pa *path) doAPIPathsGet(req pathAPIPathsGetReq) {
 				return &v
 			}(),
 			Recording: pa.recorder != nil,
+			Detection: func() *defs.APIPathDetection {
+				if pa.detectWorker == nil {
+					return nil
+				}
+				return pa.detectWorker.APIItem()
+			}(),
 			Source: func() *defs.APIPathSource {
 				if pa.source == nil {
 					return nil
@@ -881,6 +905,30 @@ func (pa *path) stopCompressing() {
 	if pa.compressCmd != nil {
 		pa.compressCmd.Close("")
 		pa.compressCmd = nil
+	}
+}
+
+// startDetecting starts running the detection model on the stream, if enabled.
+// Compressed copies are not analyzed, since they would provide the same results of the original.
+func (pa *path) startDetecting() {
+	if !pa.conf.Detect || compress.IsOutputPath(pa.name, pa.conf) {
+		return
+	}
+
+	_, port, _ := net.SplitHostPort(pa.rtspAddress)
+
+	pa.detectWorker = &detect.Worker{
+		Conf:   pa.conf,
+		Source: "rtsp://127.0.0.1:" + port + "/" + pa.name,
+		Parent: pa,
+	}
+	pa.detectWorker.Start()
+}
+
+func (pa *path) stopDetecting() {
+	if pa.detectWorker != nil {
+		pa.detectWorker.Close()
+		pa.detectWorker = nil
 	}
 }
 
@@ -1059,6 +1107,7 @@ func (pa *path) setAvailable(
 	})
 
 	pa.startCompressing()
+	pa.startDetecting()
 
 	if !pa.conf.AlwaysAvailable {
 		pa.setOnline(sourceDesc, publisherQuery)
@@ -1107,6 +1156,7 @@ func (pa *path) setNotAvailable() {
 	pa.onUnavailableHook()
 
 	pa.stopCompressing()
+	pa.stopDetecting()
 
 	if pa.recorder != nil {
 		pa.recorder.Close()

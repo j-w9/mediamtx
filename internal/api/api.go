@@ -261,6 +261,8 @@ func (a *API) Initialize() error {
 		group.POST("/moqsessions/kick/:id", a.onMoQSessionsKick)
 	}
 
+	group.GET("/detect/models/list", a.onDetectModelsList)
+
 	group.GET("/recordings/list", a.onRecordingsList)
 	group.GET("/recordings/get/*name", a.onRecordingsGet)
 	group.DELETE("/recordings/segments/delete", a.onRecordingsSegmentsDelete)

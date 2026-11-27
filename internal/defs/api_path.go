@@ -84,20 +84,21 @@ type APIPathReaderList struct {
 
 // APIPath is a path.
 type APIPath struct {
-	Name                 string         `json:"name"`
-	ConfName             string         `json:"confName"`
-	Available            bool           `json:"available"`
-	AvailableTime        *time.Time     `json:"availableTime"`
-	Online               bool           `json:"online"`
-	OnlineTime           *time.Time     `json:"onlineTime"`
-	Recording            bool           `json:"recording"`
-	Source               *APIPathSource `json:"source"`
-	Tracks2              []APIPathTrack `json:"tracks2"`
-	ReaderCount          uint64         `json:"readerCount"`
-	InboundBytes         uint64         `json:"inboundBytes"`
-	OutboundBytes        uint64         `json:"outboundBytes"`
-	InboundFramesInError uint64         `json:"inboundFramesInError"`
-	ForwardDestCount     uint64         `json:"forwardDestCount"`
+	Name                 string            `json:"name"`
+	ConfName             string            `json:"confName"`
+	Available            bool              `json:"available"`
+	AvailableTime        *time.Time        `json:"availableTime"`
+	Online               bool              `json:"online"`
+	OnlineTime           *time.Time        `json:"onlineTime"`
+	Recording            bool              `json:"recording"`
+	Detection            *APIPathDetection `json:"detection"`
+	Source               *APIPathSource    `json:"source"`
+	Tracks2              []APIPathTrack    `json:"tracks2"`
+	ReaderCount          uint64            `json:"readerCount"`
+	InboundBytes         uint64            `json:"inboundBytes"`
+	OutboundBytes        uint64            `json:"outboundBytes"`
+	InboundFramesInError uint64            `json:"inboundFramesInError"`
+	ForwardDestCount     uint64            `json:"forwardDestCount"`
 
 	// deprecated
 	Ready         bool                `json:"ready" deprecated:"true"`

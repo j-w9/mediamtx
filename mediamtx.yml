@@ -629,6 +629,39 @@ pathDefaults:
   compressPathSuffix: _compressed
 
   ###############################################
+  # Default path settings -> Object detection
+
+  # Run an object detection model on the stream.
+  # Detected objects are available through the API (in the "detection" field of paths) and in the web UI.
+  # FFmpeg must be installed and the RTSP server must be enabled.
+  detect: false
+  # Model to run. Models of the YOLO family, exported to the ONNX format, are supported.
+  # When detectServer is empty, this is the name of a .onnx file inside detectModelsDir.
+  # Otherwise, this is the name of a model hosted by the server.
+  # Class names are read from the model. If the model does not contain them, they are read
+  # from a text file with the same name of the model and the .names extension, one name per line.
+  detectModel:
+  # URL of an inference server that speaks the KServe v2 protocol
+  # (NVIDIA Triton, OpenVINO Model Server, ...), for instance http://192.168.1.10:8000
+  # When empty, the model is run on this machine with ONNX Runtime, which requires
+  # Python and its "onnxruntime" package ("onnxruntime-gpu" for NVIDIA GPUs).
+  detectServer:
+  # Device on which the model is run, when it is run on this machine.
+  # Available values are "auto" (GPU when available, otherwise CPU), "cpu" and "gpu".
+  detectDevice: auto
+  # Layout of the model output. Available values are "auto", "v8" (YOLOv8 and later),
+  # "v5" (YOLOv5, YOLOv7) and "yolox".
+  detectModelType: auto
+  # Frames to analyze per second.
+  detectFPS: 2
+  # Discard objects whose confidence is below this value, between 0 and 1.
+  detectConfidence: 0.4
+  # Directory that contains models.
+  detectModelsDir: ./models
+  # Python interpreter used to run models on this machine.
+  detectPython: python3
+
+  ###############################################
   # Default path settings -> Publisher source (when source is "publisher")
 
   # Allow another client to disconnect the current publisher and publish in its place.

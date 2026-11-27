@@ -101,6 +101,12 @@ func TestConfFromFile(t *testing.T) {
 			CompressVideoBitrate:       "1000k",
 			CompressPreset:             "veryfast",
 			CompressPathSuffix:         "_compressed",
+			DetectDevice:               "auto",
+			DetectModelType:            "auto",
+			DetectFPS:                  2,
+			DetectConfidence:           0.4,
+			DetectModelsDir:            "./models",
+			DetectPython:               "python3",
 			RTSPUDPSourcePortRange:     []uint{32768, 60999},
 			MoQTransport:               conf.MoQTransportQUIC,
 			WHEPSTUNGatherTimeout:      5 * conf.Duration(time.Second),
@@ -858,6 +864,34 @@ func TestConfErrors(t *testing.T) {
 				"  my_path:\n" +
 				"    compressPathSuffix: '_c $(reboot)'\n",
 			`invalid 'compressPathSuffix': can contain only alphanumeric characters, underscore, dot, minus, slash`,
+		},
+		{
+			"detect without model",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    detect: yes\n",
+			`'detect' requires 'detectModel'`,
+		},
+		{
+			"invalid detect model",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    detectModel: ../../etc/passwd\n",
+			`invalid 'detectModel': can't contain dot path segments`,
+		},
+		{
+			"invalid detect server",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    detectServer: ftp://server\n",
+			`invalid 'detectServer': 'ftp://server' (it must be a HTTP or HTTPS URL)`,
+		},
+		{
+			"invalid detect device",
+			"paths:\n" +
+				"  my_path:\n" +
+				"    detectDevice: tpu\n",
+			`invalid 'detectDevice': 'tpu' (available values are 'auto', 'cpu' and 'gpu')`,
 		},
 		{
 			"compress without RTSP server",
